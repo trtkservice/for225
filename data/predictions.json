@@ -152,18 +152,96 @@
         "reasoning": "Pythonルールの根拠（米国株高、低VIX）は環境としてLONGを支持しているが、日経225が前日比+3.92%という異常な高騰を示しており、市場に強い過熱感が確認される。この高値水準で追随エントリーすることは、短期的な利益確定売りに巻き込まれ、高値掴みとなるリスクが非常に高い。シグナルの方向性は尊重するが、リスク管理上、現在のタイミングでのエントリーは不適切と判断し、調整を待つべき。",
         "approved": false
       }
+    },
+    {
+      "timestamp": "2026-02-03 22:12",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54555.0,
+          "high": 54910.0,
+          "low": 53925.0,
+          "prev_close": 54010.0,
+          "change_pct": 1.01,
+          "atr": null
+        },
+        "nikkei_index": {
+          "close": 54720.66,
+          "high": 54782.83,
+          "low": 53307.74,
+          "prev_close": 52655.18,
+          "change_pct": 3.92,
+          "atr": 1171.62
+        },
+        "sp500": {
+          "close": 6976.44,
+          "high": 6991.92,
+          "low": 6914.34,
+          "prev_close": 6939.03,
+          "change_pct": 0.54,
+          "atr": null
+        },
+        "dow": {
+          "close": 49407.66,
+          "high": 49484.95,
+          "low": 48673.58,
+          "prev_close": 48892.47,
+          "change_pct": 1.05,
+          "atr": null
+        },
+        "vix": {
+          "close": 16.1,
+          "high": 16.38,
+          "low": 16.05,
+          "prev_close": 16.34,
+          "change_pct": -1.47,
+          "atr": null
+        },
+        "usdjpy": {
+          "close": 155.82,
+          "high": 155.98,
+          "low": 155.29,
+          "prev_close": 155.2,
+          "change_pct": 0.4,
+          "atr": null
+        },
+        "us10y": {
+          "close": 4.28,
+          "high": 4.28,
+          "low": 4.23,
+          "prev_close": 4.24,
+          "change_pct": 0.8,
+          "atr": null
+        }
+      },
+      "rule_check": {
+        "signal": "LONG",
+        "strength": "STRONG",
+        "reason": "米国株大幅上昇 + VIX低水準"
+      },
+      "prediction": {
+        "direction": "WAIT",
+        "confidence": "MEDIUM",
+        "stop_points": 585,
+        "target_points": 1171,
+        "reasoning": "Pythonルールの判定根拠（米国株高、VIX低水準）は、リスクオン環境を示しており、LONGの方向性自体は妥当である。しかし、市場データを見ると、日経225が単日で+3.92%という異常な急騰を見せており、市場の過熱感が極めて高い。この水準から新たにLONGエントリーを行うと、短期的な利益確定売りによる急な反落リスク（高値掴みリスク）が無視できないほど高い。リスク管理の観点から、この急騰直後の追随買いは避け、一旦様子見（WAIT）として、適切な押し目でのエントリー機会を待つべきと判断する。",
+        "approved": false
+      }
     }
   ],
   "shadow_portfolio": {
-    "capital": 100000,
-    "position": {
-      "direction": "LONG",
-      "entry_date": "2026-02-03 20:51",
-      "entry_price": 54720.66,
-      "stop": 54520.66,
-      "target": 55120.66,
-      "size": 1
-    },
-    "trades": []
+    "capital": 98000.0,
+    "position": null,
+    "trades": [
+      {
+        "entry_date": "2026-02-03 20:51",
+        "exit_date": "2026-02-03 22:12",
+        "direction": "LONG",
+        "entry_price": 54720.66,
+        "exit_price": 54520.66,
+        "pnl_points": -200.0,
+        "pnl_yen": -2000.0,
+        "close_reason": "STOP"
+      }
+    ]
   }
 }

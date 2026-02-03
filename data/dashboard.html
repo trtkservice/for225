@@ -128,15 +128,15 @@
         <div class="stats-grid">
             <div class="stat-card">
                 <h3>💰 Capital</h3>
-                <div class="value">¥100,000</div>
+                <div class="value">¥98,000</div>
             </div>
             <div class="stat-card">
                 <h3>📊 Total P&L</h3>
-                <div class="value profit">¥+0</div>
+                <div class="value loss">¥-2,000</div>
             </div>
             <div class="stat-card">
                 <h3>📈 Return</h3>
-                <div class="value profit">+0.00%</div>
+                <div class="value loss">-2.00%</div>
             </div>
             <div class="stat-card">
                 <h3>🎯 Win Rate</h3>
@@ -144,24 +144,18 @@
             </div>
             <div class="stat-card">
                 <h3>📝 Total Trades</h3>
-                <div class="value">0</div>
+                <div class="value">1</div>
             </div>
             <div class="stat-card">
                 <h3>🔮 Predictions</h3>
-                <div class="value">3</div>
+                <div class="value">4</div>
             </div>
         </div>
         
         
-        <div class="position-card long">
+        <div class="position-card neutral">
             <h3>📍 Current Position</h3>
-            <div class="position-details">
-                <span class="signal long">LONG</span>
-                <p>Entry: 54,721</p>
-                <p>Stop: 54,521</p>
-                <p>Target: 55,121</p>
-                <p>Since: 2026-02-03 20:51</p>
-            </div>
+            <p>No open position</p>
         </div>
         
         
@@ -182,6 +176,14 @@
             </thead>
             <tbody>
                 
+        <tr>
+            <td>2026-02-03 22:12</td>
+            <td><span class="signal wait">WAIT</span></td>
+            <td>STRONG</td>
+            <td>MEDIUM</td>
+            <td>Pythonルールの判定根拠（米国株高、VIX低水準）は、リスクオン環境を示しており、LONGの方向...</td>
+        </tr>
+        
         <tr>
             <td>2026-02-03 21:07</td>
             <td><span class="signal wait">WAIT</span></td>
@@ -223,11 +225,21 @@
                 </tr>
             </thead>
             <tbody>
-                <tr><td colspan="7">No trades yet</td></tr>
+                
+        <tr>
+            <td>2026-02-03 20:51</td>
+            <td>2026-02-03 22:12</td>
+            <td>LONG</td>
+            <td>54,721</td>
+            <td>54,521</td>
+            <td class="loss">¥-2,000</td>
+            <td>STOP</td>
+        </tr>
+        
             </tbody>
         </table>
         
-        <p class="updated">Last updated: 2026-02-03 12:07:17 UTC</p>
+        <p class="updated">Last updated: 2026-02-03 13:12:39 UTC</p>
     </div>
     
     <script>
@@ -235,10 +247,10 @@
         new Chart(ctx, {
             type: 'line',
             data: {
-                labels: [0],
+                labels: [0, 1],
                 datasets: [{
                     label: 'Capital (¥)',
-                    data: [100000],
+                    data: [100000, 98000.0],
                     borderColor: '#00d4ff',
                     backgroundColor: 'rgba(0, 212, 255, 0.1)',
                     fill: true,
