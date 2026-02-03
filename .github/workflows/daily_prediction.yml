@@ -1,0 +1,41 @@
+name: Daily Nikkei Prediction
+
+on:
+  schedule:
+    # 日本時間 8:00 = UTC 23:00 (前日)
+    - cron: '0 23 * * *'
+    # 日本時間 16:00 = UTC 7:00
+    - cron: '0 7 * * *'
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run prediction bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python src/nikkei_bot.py
+      
+      - name: Commit results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/
+          git diff --staged --quiet || git commit -m "📊 Update predictions $(date +'%Y-%m-%d %H:%M')"
+          git push
