@@ -88,6 +88,8 @@ def fetch_market_data():
                 
                 data[name] = {
                     "close": round(close, 2),
+                    "high": round(float(latest['High']), 2),
+                    "low": round(float(latest['Low']), 2),
                     "prev_close": round(prev_close, 2),
                     "change_pct": round(change_pct, 2),
                     "atr": atr
@@ -280,7 +282,10 @@ def update_shadow_portfolio(data, prediction, market_data):
     """Update shadow portfolio with new prediction and evaluate previous trades."""
     portfolio = data.get("shadow_portfolio", {"capital": SHADOW_CAPITAL, "position": None, "trades": []})
     
-    nikkei_price = market_data.get('nikkei_index', {}).get('close')
+    nikkei_data = market_data.get('nikkei_index', {})
+    nikkei_price = nikkei_data.get('close')
+    nikkei_high = nikkei_data.get('high')
+    nikkei_low = nikkei_data.get('low')
     
     # Check if previous position hit stop or target
     if portfolio.get("position"):
@@ -290,31 +295,37 @@ def update_shadow_portfolio(data, prediction, market_data):
         stop = pos["stop"]
         target = pos["target"]
         
-        if nikkei_price:
+        if nikkei_price and nikkei_high and nikkei_low:
             pnl_points = (nikkei_price - entry) if direction == "LONG" else (entry - nikkei_price)
-            pnl_yen = pnl_points * 10  # マイクロ先物: 1円 = 10円
             
-            # Check stop/target
+            # Check stop/target using High/Low
             closed = False
             close_reason = ""
+            exit_price = nikkei_price
             
             if direction == "LONG":
-                if nikkei_price <= stop:
+                # Low triggers Stop, High triggers Target
+                if nikkei_low <= stop:
                     closed = True
                     close_reason = "STOP"
+                    exit_price = stop
                     pnl_points = stop - entry
-                elif nikkei_price >= target:
+                elif nikkei_high >= target:
                     closed = True
                     close_reason = "TARGET"
+                    exit_price = target
                     pnl_points = target - entry
             else:  # SHORT
-                if nikkei_price >= stop:
+                # High triggers Stop, Low triggers Target
+                if nikkei_high >= stop:
                     closed = True
                     close_reason = "STOP"
+                    exit_price = stop
                     pnl_points = entry - stop
-                elif nikkei_price <= target:
+                elif nikkei_low <= target:
                     closed = True
                     close_reason = "TARGET"
+                    exit_price = target
                     pnl_points = entry - target
             
             if closed:
@@ -325,7 +336,7 @@ def update_shadow_portfolio(data, prediction, market_data):
                     "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
                     "direction": direction,
                     "entry_price": entry,
-                    "exit_price": nikkei_price,
+                    "exit_price": exit_price,
                     "pnl_points": round(pnl_points, 0),
                     "pnl_yen": round(pnl_yen, 0),
                     "close_reason": close_reason
