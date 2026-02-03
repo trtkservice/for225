@@ -123,14 +123,44 @@ def create_analysis_prompt(market_data):
 def call_gemini(prompt, api_key):
     """Call Gemini API for analysis."""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemini-1.5-flash')
     
-    response = model.generate_content(prompt)
-    return response.text
+    # Try gemini-1.5-flash first using just the name without 'models/' prefix
+    # If that fails, we'll catch it and list available models
+    model_name = 'gemini-1.5-flash'
+    
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"⚠️ Error with model {model_name}: {e}")
+        print("📋 Listing available models:")
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    print(f"   - {m.name}")
+            
+            # Fallback to gemini-pro which is usually available
+            print("🔄 Falling back to 'gemini-pro'...")
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e2:
+            print(f"❌ Fallback failed: {e2}")
+            return None
 
 
 def parse_ai_response(response_text):
     """Parse AI response to extract prediction."""
+    if not response_text:
+        return {
+            "direction": "WAIT",
+            "confidence": "LOW",
+            "stop_points": 200,
+            "target_points": 400,
+            "reasoning": "AI generation failed"
+        }
+        
     try:
         # Extract JSON from response
         import re
