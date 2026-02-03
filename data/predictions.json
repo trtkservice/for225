@@ -226,11 +226,92 @@
         "reasoning": "Pythonルールの判定根拠（米国株高、VIX低水準）は、リスクオン環境を示しており、LONGの方向性自体は妥当である。しかし、市場データを見ると、日経225が単日で+3.92%という異常な急騰を見せており、市場の過熱感が極めて高い。この水準から新たにLONGエントリーを行うと、短期的な利益確定売りによる急な反落リスク（高値掴みリスク）が無視できないほど高い。リスク管理の観点から、この急騰直後の追随買いは避け、一旦様子見（WAIT）として、適切な押し目でのエントリー機会を待つべきと判断する。",
         "approved": false
       }
+    },
+    {
+      "timestamp": "2026-02-04 08:35",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54235.0,
+          "high": 54300.0,
+          "low": 54180.0,
+          "prev_close": 54010.0,
+          "change_pct": 0.42,
+          "atr": null
+        },
+        "nikkei_index": {
+          "close": 54720.66,
+          "high": 54782.83,
+          "low": 53307.74,
+          "prev_close": 52655.18,
+          "change_pct": 3.92,
+          "atr": 1171.62
+        },
+        "sp500": {
+          "close": 6917.81,
+          "high": 6993.08,
+          "low": 6862.05,
+          "prev_close": 6976.44,
+          "change_pct": -0.84,
+          "atr": null
+        },
+        "dow": {
+          "close": 49240.99,
+          "high": 49653.13,
+          "low": 48832.78,
+          "prev_close": 49407.66,
+          "change_pct": -0.34,
+          "atr": null
+        },
+        "vix": {
+          "close": 18.0,
+          "high": 20.37,
+          "low": 16.05,
+          "prev_close": 16.34,
+          "change_pct": 10.16,
+          "atr": null
+        },
+        "usdjpy": {
+          "close": 155.82,
+          "high": 155.86,
+          "low": 155.68,
+          "prev_close": 155.2,
+          "change_pct": 0.39,
+          "atr": null
+        },
+        "us10y": {
+          "close": 4.27,
+          "high": 4.3,
+          "low": 4.27,
+          "prev_close": 4.28,
+          "change_pct": -0.02,
+          "atr": null
+        }
+      },
+      "rule_check": {
+        "signal": "SHORT",
+        "strength": "STRONG",
+        "reason": "米国株大幅下落"
+      },
+      "prediction": {
+        "direction": "SHORT",
+        "confidence": "HIGH",
+        "stop_points": 585,
+        "target_points": 1171,
+        "reasoning": "Pythonルールの根拠（米株下落）と日経の現状（+3.92%高騰）は矛盾しているが、この異常な高騰自体が短期的な天井シグナルとなる。VIX指数が10.16%と大幅に上昇しており、市場の過熱感と不安定さを示すため、この高値からの強い反落（SHORT）を狙うのは極めて妥当であると判断する。ボラティリティが非常に高い環境下のため、ターゲットとストップは厳格に守る必要がある。",
+        "approved": true
+      }
     }
   ],
   "shadow_portfolio": {
     "capital": 98000.0,
-    "position": null,
+    "position": {
+      "direction": "SHORT",
+      "entry_date": "2026-02-04 08:35",
+      "entry_price": 54720.66,
+      "stop": 55305.66,
+      "target": 53549.66,
+      "size": 1
+    },
     "trades": [
       {
         "entry_date": "2026-02-03 20:51",
