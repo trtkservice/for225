@@ -123,7 +123,7 @@ def create_analysis_prompt(market_data):
 def call_gemini(prompt, api_key):
     """Call Gemini API for analysis."""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model = genai.GenerativeModel('models/gemini-1.5-flash')
     
     response = model.generate_content(prompt)
     return response.text
