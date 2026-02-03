@@ -124,9 +124,8 @@ def call_gemini(prompt, api_key):
     """Call Gemini API for analysis."""
     genai.configure(api_key=api_key)
     
-    # Try gemini-1.5-flash first using just the name without 'models/' prefix
-    # If that fails, we'll catch it and list available models
-    model_name = 'gemini-1.5-flash'
+    # Use gemini-flash-latest as confirmed available
+    model_name = 'gemini-flash-latest'
     
     try:
         model = genai.GenerativeModel(model_name)
@@ -140,9 +139,9 @@ def call_gemini(prompt, api_key):
                 if 'generateContent' in m.supported_generation_methods:
                     print(f"   - {m.name}")
             
-            # Fallback to gemini-pro which is usually available
-            print("🔄 Falling back to 'gemini-pro'...")
-            model = genai.GenerativeModel('gemini-pro')
+            # Fallback to gemini-pro-latest
+            print("🔄 Falling back to 'gemini-pro-latest'...")
+            model = genai.GenerativeModel('gemini-pro-latest')
             response = model.generate_content(prompt)
             return response.text
         except Exception as e2:
@@ -270,9 +269,12 @@ def update_shadow_portfolio(data, prediction, market_data):
 
 def calculate_stats(data):
     """Calculate trading statistics."""
-    trades = data.get("shadow_portfolio", {}).get("trades", [])
+    portfolio = data.get("shadow_portfolio", {"capital": SHADOW_CAPITAL, "trades": []})
+    trades = portfolio.get("trades", [])
+    capital = portfolio.get("capital", SHADOW_CAPITAL)
+    
     if not trades:
-        return {"total_trades": 0, "win_rate": 0, "total_pnl": 0}
+        return {"total_trades": 0, "win_rate": 0, "total_pnl": 0, "capital": capital}
     
     wins = len([t for t in trades if t["pnl_yen"] > 0])
     total_pnl = sum(t["pnl_yen"] for t in trades)
@@ -281,7 +283,7 @@ def calculate_stats(data):
         "total_trades": len(trades),
         "win_rate": round(wins / len(trades) * 100, 1) if trades else 0,
         "total_pnl": total_pnl,
-        "capital": data.get("shadow_portfolio", {}).get("capital", SHADOW_CAPITAL)
+        "capital": capital
     }
 
 
