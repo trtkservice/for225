@@ -9,6 +9,7 @@ import json
 import sys
 from datetime import datetime, timedelta
 import pytz
+import pandas as pd
 
 # Market data
 try:
@@ -44,14 +45,34 @@ TICKERS = {
 }
 
 
+    return data
+
+
+def calculate_atr(hist, period=5):
+    """Calculate Average True Range (ATR)."""
+    try:
+        high_low = hist['High'] - hist['Low']
+        high_close = (hist['High'] - hist['Close'].shift()).abs()
+        low_close = (hist['Low'] - hist['Close'].shift()).abs()
+        
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        
+        atr = true_range.rolling(window=period).mean().iloc[-1]
+        return round(atr, 2)
+    except Exception:
+        return 400.0  # Fallback to default
+
+
 def fetch_market_data():
     """Fetch latest market data from Yahoo Finance."""
     data = {}
+    import pandas as pd  # Import locally to avoid global if not needed
     
     for name, ticker in TICKERS.items():
         try:
             t = yf.Ticker(ticker)
-            hist = t.history(period="5d")
+            hist = t.history(period="10d")  # Need more days for ATR
             if not hist.empty:
                 latest = hist.iloc[-1]
                 prev = hist.iloc[-2] if len(hist) > 1 else hist.iloc[-1]
@@ -60,10 +81,16 @@ def fetch_market_data():
                 prev_close = float(prev['Close'])
                 change_pct = ((close - prev_close) / prev_close) * 100 if prev_close != 0 else 0
                 
+                # Calculate ATR for Nikkei Index
+                atr = None
+                if name == "nikkei_index":
+                    atr = calculate_atr(hist)
+                
                 data[name] = {
                     "close": round(close, 2),
                     "prev_close": round(prev_close, 2),
-                    "change_pct": round(change_pct, 2)
+                    "change_pct": round(change_pct, 2),
+                    "atr": atr
                 }
         except Exception as e:
             print(f"Error fetching {name}: {e}")
@@ -394,10 +421,19 @@ def main():
             "approved": True
         }
     
+    # Override Stop/Target with ATR based calculation
+    atr = market_data.get('nikkei_index', {}).get('atr', 400) or 400
+    stop_points = int(atr * 0.5)
+    target_points = int(atr * 1.0)
+    
+    prediction['stop_points'] = stop_points
+    prediction['target_points'] = target_points
+    
     print(f"\n📈 Final Prediction: {prediction['direction']}")
     print(f"   Confidence: {prediction['confidence']}")
-    print(f"   Stop: {prediction['stop_points']} points")
-    print(f"   Target: {prediction['target_points']} points")
+    print(f"   ATR: {atr:.0f} points")
+    print(f"   Stop: {prediction['stop_points']} points (ATR x 0.5)")
+    print(f"   Target: {prediction['target_points']} points (ATR x 1.0)")
     print(f"   Reason: {prediction['reasoning']}")
     
     # Load and update data
