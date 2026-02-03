@@ -1,8 +1,63 @@
 {
-    "predictions": [],
-    "shadow_portfolio": {
-        "capital": 100000,
-        "position": null,
-        "trades": []
+  "predictions": [
+    {
+      "timestamp": "2026-02-03 20:51",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54425.0,
+          "prev_close": 54010.0,
+          "change_pct": 0.77
+        },
+        "nikkei_index": {
+          "close": 54720.66,
+          "prev_close": 52655.18,
+          "change_pct": 3.92
+        },
+        "sp500": {
+          "close": 6976.44,
+          "prev_close": 6939.03,
+          "change_pct": 0.54
+        },
+        "dow": {
+          "close": 49407.66,
+          "prev_close": 48892.47,
+          "change_pct": 1.05
+        },
+        "vix": {
+          "close": 16.36,
+          "prev_close": 16.34,
+          "change_pct": 0.12
+        },
+        "usdjpy": {
+          "close": 155.92,
+          "prev_close": 155.2,
+          "change_pct": 0.46
+        },
+        "us10y": {
+          "close": 4.28,
+          "prev_close": 4.24,
+          "change_pct": 0.8
+        }
+      },
+      "prediction": {
+        "direction": "LONG",
+        "confidence": "HIGH",
+        "stop_points": 200,
+        "target_points": 400,
+        "reasoning": "米国株がS&P500、NYダウともに+0.3%を大幅に超えて上昇し、かつVIXが20未満であるため、強いリスクオン環境が継続しています。また、ドル円も円安条件を満たしています。"
+      }
     }
+  ],
+  "shadow_portfolio": {
+    "capital": 100000,
+    "position": {
+      "direction": "LONG",
+      "entry_date": "2026-02-03 20:51",
+      "entry_price": 54720.66,
+      "stop": 54520.66,
+      "target": 55120.66,
+      "size": 1
+    },
+    "trades": []
+  }
 }
