@@ -304,25 +304,33 @@ def update_shadow_portfolio(data, prediction, market_data):
             exit_price = nikkei_price
             
             if direction == "LONG":
-                # Low triggers Stop, High triggers Target
-                if nikkei_low <= stop:
+                # Check for BOTH hit (Conservative: prioritize STOP)
+                hit_stop = nikkei_low <= stop
+                hit_target = nikkei_high >= target
+                
+                if hit_stop:
+                    # Even if target was also hit, we assume stop hit first (conservative)
                     closed = True
                     close_reason = "STOP"
                     exit_price = stop
                     pnl_points = stop - entry
-                elif nikkei_high >= target:
+                elif hit_target:
                     closed = True
                     close_reason = "TARGET"
                     exit_price = target
                     pnl_points = target - entry
+                    
             else:  # SHORT
-                # High triggers Stop, Low triggers Target
-                if nikkei_high >= stop:
+                # Check for BOTH hit (Conservative: prioritize STOP)
+                hit_stop = nikkei_high >= stop
+                hit_target = nikkei_low <= target
+                
+                if hit_stop:
                     closed = True
                     close_reason = "STOP"
                     exit_price = stop
                     pnl_points = entry - stop
-                elif nikkei_low <= target:
+                elif hit_target:
                     closed = True
                     close_reason = "TARGET"
                     exit_price = target
