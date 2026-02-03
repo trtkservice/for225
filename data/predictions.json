@@ -46,6 +46,59 @@
         "target_points": 400,
         "reasoning": "米国株がS&P500、NYダウともに+0.3%を大幅に超えて上昇し、かつVIXが20未満であるため、強いリスクオン環境が継続しています。また、ドル円も円安条件を満たしています。"
       }
+    },
+    {
+      "timestamp": "2026-02-03 21:03",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54440.0,
+          "prev_close": 54010.0,
+          "change_pct": 0.8
+        },
+        "nikkei_index": {
+          "close": 54720.66,
+          "prev_close": 52655.18,
+          "change_pct": 3.92
+        },
+        "sp500": {
+          "close": 6976.44,
+          "prev_close": 6939.03,
+          "change_pct": 0.54
+        },
+        "dow": {
+          "close": 49407.66,
+          "prev_close": 48892.47,
+          "change_pct": 1.05
+        },
+        "vix": {
+          "close": 16.33,
+          "prev_close": 16.34,
+          "change_pct": -0.06
+        },
+        "usdjpy": {
+          "close": 155.91,
+          "prev_close": 155.2,
+          "change_pct": 0.46
+        },
+        "us10y": {
+          "close": 4.28,
+          "prev_close": 4.24,
+          "change_pct": 0.8
+        }
+      },
+      "rule_check": {
+        "signal": "LONG",
+        "strength": "STRONG",
+        "reason": "米国株大幅上昇 + VIX低水準"
+      },
+      "prediction": {
+        "direction": "LONG",
+        "confidence": "MEDIUM",
+        "stop_points": 200,
+        "target_points": 400,
+        "reasoning": "米国株の大幅上昇（NYダウ+1.05%）とVIXの低水準、および円安基調が継続しており、LONGシグナルの根拠は妥当である。しかし、日経225が単日で約4%と急騰しているため、短期的な過熱感と利益確定売りのリスクが高い。このため、自信度をMEDIUMに設定し、提示されたストップロス（200pt）を厳格に適用することを条件に、ルールを採用する。",
+        "approved": true
+      }
     }
   ],
   "shadow_portfolio": {
