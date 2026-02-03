@@ -35,6 +35,10 @@ jobs:
         run: |
           python src/nikkei_bot.py
       
+      - name: Generate dashboard
+        run: |
+          python src/generate_dashboard.py
+      
       - name: Commit results
         run: |
           git config --local user.email "action@github.com"
