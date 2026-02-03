@@ -72,10 +72,62 @@ def fetch_market_data():
     return data
 
 
-def create_analysis_prompt(market_data):
-    """Create a prompt for Gemini to analyze market conditions."""
+def python_rule_check(market_data):
+    """
+    Layer 1: Python-based rule check (deterministic)
+    Returns: (signal, strength, reason)
+    """
+    # Extract values safely
+    sp500_change = market_data.get('sp500', {}).get('change_pct', 0) or 0
+    dow_change = market_data.get('dow', {}).get('change_pct', 0) or 0
+    vix = market_data.get('vix', {}).get('close', 20) or 20
+    usdjpy_change = market_data.get('usdjpy', {}).get('change_pct', 0) or 0
+    us10y_change = market_data.get('us10y', {}).get('change_pct', 0) or 0
     
-    prompt = f"""あなたは日経225先物のデイトレーダーです。以下の市場データを分析し、明日の日経225の方向を判定してください。
+    # Strong LONG conditions
+    if (sp500_change > 0.5 or dow_change > 0.5) and vix < 18:
+        return "LONG", "STRONG", "米国株大幅上昇 + VIX低水準"
+    
+    # Medium LONG conditions
+    if (sp500_change > 0.3 or dow_change > 0.3) and vix < 20:
+        if usdjpy_change > 0.3:  # 円安も追い風
+            return "LONG", "STRONG", "米国株上昇 + 円安 + VIX安定"
+        return "LONG", "MEDIUM", "米国株上昇 + VIX安定"
+    
+    # Weak LONG (円安のみ)
+    if usdjpy_change > 0.5 and vix < 22:
+        return "LONG", "WEAK", "円安トレンド"
+    
+    # Strong SHORT conditions
+    if vix > 25:
+        return "SHORT", "STRONG", "VIX急騰（リスクオフ）"
+    
+    if sp500_change < -0.5 or dow_change < -0.5:
+        return "SHORT", "STRONG", "米国株大幅下落"
+    
+    # Medium SHORT conditions
+    if (sp500_change < -0.3 or dow_change < -0.3) and vix > 20:
+        return "SHORT", "MEDIUM", "米国株下落 + VIX上昇"
+    
+    if usdjpy_change < -0.5:  # 急激な円高
+        return "SHORT", "MEDIUM", "急激な円高"
+    
+    # No clear signal
+    return "WAIT", None, "明確なシグナルなし"
+
+def create_confirmation_prompt(market_data, rule_signal, rule_strength, rule_reason):
+    """
+    Layer 2: Create a prompt for Gemini to CONFIRM or REJECT the Python rule decision.
+    LLM acts as a safety filter, not the primary decision maker.
+    """
+    
+    prompt = f"""あなたは日経225先物のリスク管理担当です。
+Pythonルールが以下の判定を出しました。この判定が妥当かどうか確認してください。
+
+## Pythonルールの判定
+- **シグナル**: {rule_signal}
+- **強度**: {rule_strength}
+- **理由**: {rule_reason}
 
 ## 市場データ（最新）
 
@@ -88,34 +140,31 @@ def create_analysis_prompt(market_data):
 | ドル円 | {market_data.get('usdjpy', {}).get('close', 'N/A')} | {market_data.get('usdjpy', {}).get('change_pct', 'N/A')}% |
 | 米10年債利回り | {market_data.get('us10y', {}).get('close', 'N/A')} | {market_data.get('us10y', {}).get('change_pct', 'N/A')}% |
 
-## 判定ルール
+## あなたのタスク
 
-以下のルールに基づいて判定してください：
+1. Pythonルールの判定に重大な問題がないか確認
+2. 以下のリスクがないかチェック:
+   - 重要経済指標発表（雇用統計、FOMC等）の直前
+   - 市場の過熱感（連続上昇後の反落リスク等）
+   - 通常とは異なる市場環境
 
-### LONG（買い）条件
-- 米国株（S&P500 or ダウ）が+0.3%以上 AND VIX < 20
-- または、ドル円が+0.3%以上（円安）AND VIX < 25
-
-### SHORT（売り）条件
-- 米国株（S&P500 or ダウ）が-0.5%以下 OR VIX > 25
-- または、ドル円が-0.5%以下（円高）
-
-### WAIT（様子見）条件
-- 上記のどちらにも該当しない場合
-
-## 出力形式
-
-以下のJSON形式で出力してください。他の文章は不要です。
+## 出力形式（JSON）
 
 ```json
 {{
-  "direction": "LONG" または "SHORT" または "WAIT",
+  "approved": true または false,
+  "final_direction": "{rule_signal}" または "WAIT",
   "confidence": "HIGH" または "MEDIUM" または "LOW",
   "stop_points": 200,
   "target_points": 400,
-  "reasoning": "判定理由を1-2文で"
+  "reasoning": "確認結果と補足情報"
 }}
 ```
+
+注意: 
+- approved=true なら final_direction は Pythonルールの判定をそのまま採用
+- approved=false なら final_direction は "WAIT" にして理由を説明
+- 迷った場合は approved=true（Pythonルールを尊重）
 """
     return prompt
 
@@ -149,33 +198,40 @@ def call_gemini(prompt, api_key):
             return None
 
 
-def parse_ai_response(response_text):
-    """Parse AI response to extract prediction."""
+def parse_ai_response(response_text, rule_signal="WAIT"):
+    """Parse AI response to extract prediction (confirmation format)."""
+    default_response = {
+        "direction": rule_signal,
+        "confidence": "MEDIUM",
+        "stop_points": 200,
+        "target_points": 400,
+        "reasoning": "AI確認スキップ（Pythonルール採用）",
+        "approved": True
+    }
+    
     if not response_text:
-        return {
-            "direction": "WAIT",
-            "confidence": "LOW",
-            "stop_points": 200,
-            "target_points": 400,
-            "reasoning": "AI generation failed"
-        }
+        return default_response
         
     try:
         # Extract JSON from response
         import re
         json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
         if json_match:
-            return json.loads(json_match.group())
+            parsed = json.loads(json_match.group())
+            
+            # Convert new format to standard format
+            return {
+                "direction": parsed.get("final_direction", rule_signal),
+                "confidence": parsed.get("confidence", "MEDIUM"),
+                "stop_points": parsed.get("stop_points", 200),
+                "target_points": parsed.get("target_points", 400),
+                "reasoning": parsed.get("reasoning", ""),
+                "approved": parsed.get("approved", True)
+            }
     except Exception as e:
         print(f"Error parsing AI response: {e}")
     
-    return {
-        "direction": "WAIT",
-        "confidence": "LOW",
-        "stop_points": 200,
-        "target_points": 400,
-        "reasoning": "Failed to parse AI response"
-    }
+    return default_response
 
 
 def load_predictions():
@@ -289,7 +345,7 @@ def calculate_stats(data):
 
 def main():
     print("=" * 60)
-    print("🤖 Nikkei 225 Trading Bot")
+    print("🤖 Nikkei 225 Trading Bot (Hybrid Mode)")
     print(f"📅 {datetime.now(JST).strftime('%Y-%m-%d %H:%M JST')}")
     print("=" * 60)
     
@@ -307,13 +363,38 @@ def main():
         if values.get("close"):
             print(f"   {name}: {values['close']} ({values['change_pct']:+.2f}%)")
     
-    # Create prompt and call Gemini
-    print("\n🧠 Analyzing with Gemini AI...")
-    prompt = create_analysis_prompt(market_data)
-    response = call_gemini(prompt, api_key)
-    prediction = parse_ai_response(response)
+    # Layer 1: Python Rule Check
+    print("\n🔧 Layer 1: Python Rule Check...")
+    rule_signal, rule_strength, rule_reason = python_rule_check(market_data)
+    print(f"   Signal: {rule_signal}")
+    print(f"   Strength: {rule_strength}")
+    print(f"   Reason: {rule_reason}")
     
-    print(f"\n📈 Prediction: {prediction['direction']}")
+    # Layer 2: LLM Confirmation (only if Python has a signal)
+    if rule_signal != "WAIT":
+        print("\n🧠 Layer 2: Gemini AI Confirmation...")
+        prompt = create_confirmation_prompt(market_data, rule_signal, rule_strength, rule_reason)
+        response = call_gemini(prompt, api_key)
+        prediction = parse_ai_response(response, rule_signal)
+        
+        if prediction.get("approved", True):
+            print(f"   ✅ AI Approved: {prediction['direction']}")
+        else:
+            print(f"   ⚠️ AI Rejected → WAIT")
+            prediction["direction"] = "WAIT"
+    else:
+        # No signal from Python rules, skip LLM
+        print("\n⏸️ Layer 2: Skipped (No Python signal)")
+        prediction = {
+            "direction": "WAIT",
+            "confidence": "N/A",
+            "stop_points": 200,
+            "target_points": 400,
+            "reasoning": rule_reason,
+            "approved": True
+        }
+    
+    print(f"\n📈 Final Prediction: {prediction['direction']}")
     print(f"   Confidence: {prediction['confidence']}")
     print(f"   Stop: {prediction['stop_points']} points")
     print(f"   Target: {prediction['target_points']} points")
@@ -326,6 +407,11 @@ def main():
     data["predictions"].append({
         "timestamp": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
         "market_data": market_data,
+        "rule_check": {
+            "signal": rule_signal,
+            "strength": rule_strength,
+            "reason": rule_reason
+        },
         "prediction": prediction
     })
     
