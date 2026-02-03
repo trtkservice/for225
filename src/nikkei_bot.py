@@ -45,7 +45,7 @@ TICKERS = {
 }
 
 
-    return data
+
 
 
 def calculate_atr(hist, period=5):
