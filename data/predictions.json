@@ -99,6 +99,59 @@
         "reasoning": "米国株の大幅上昇（NYダウ+1.05%）とVIXの低水準、および円安基調が継続しており、LONGシグナルの根拠は妥当である。しかし、日経225が単日で約4%と急騰しているため、短期的な過熱感と利益確定売りのリスクが高い。このため、自信度をMEDIUMに設定し、提示されたストップロス（200pt）を厳格に適用することを条件に、ルールを採用する。",
         "approved": true
       }
+    },
+    {
+      "timestamp": "2026-02-03 21:07",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54490.0,
+          "prev_close": 54010.0,
+          "change_pct": 0.89
+        },
+        "nikkei_index": {
+          "close": 54720.66,
+          "prev_close": 52655.18,
+          "change_pct": 3.92
+        },
+        "sp500": {
+          "close": 6976.44,
+          "prev_close": 6939.03,
+          "change_pct": 0.54
+        },
+        "dow": {
+          "close": 49407.66,
+          "prev_close": 48892.47,
+          "change_pct": 1.05
+        },
+        "vix": {
+          "close": 16.37,
+          "prev_close": 16.34,
+          "change_pct": 0.18
+        },
+        "usdjpy": {
+          "close": 155.91,
+          "prev_close": 155.2,
+          "change_pct": 0.45
+        },
+        "us10y": {
+          "close": 4.28,
+          "prev_close": 4.24,
+          "change_pct": 0.8
+        }
+      },
+      "rule_check": {
+        "signal": "LONG",
+        "strength": "STRONG",
+        "reason": "米国株大幅上昇 + VIX低水準"
+      },
+      "prediction": {
+        "direction": "WAIT",
+        "confidence": "MEDIUM",
+        "stop_points": 200,
+        "target_points": 400,
+        "reasoning": "Pythonルールの根拠（米国株高、低VIX）は環境としてLONGを支持しているが、日経225が前日比+3.92%という異常な高騰を示しており、市場に強い過熱感が確認される。この高値水準で追随エントリーすることは、短期的な利益確定売りに巻き込まれ、高値掴みとなるリスクが非常に高い。シグナルの方向性は尊重するが、リスク管理上、現在のタイミングでのエントリーは不適切と判断し、調整を待つべき。",
+        "approved": false
+      }
     }
   ],
   "shadow_portfolio": {
