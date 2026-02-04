@@ -35,19 +35,42 @@ def generate_html(data):
     pred_rows = ""
     for p in reversed(predictions[-20:]):  # Last 20 predictions
         ts = p.get("timestamp", "N/A")
-        rule = p.get("rule_check", {})
+        scores = p.get("scores", {})
         pred = p.get("prediction", {})
         
         direction = pred.get("direction", "WAIT")
         direction_class = "long" if direction == "LONG" else "short" if direction == "SHORT" else "wait"
         
+        # Format scores if available
+        score_html = "-"
+        if scores:
+            total = scores.get("total_score", 0)
+            t_score = scores.get("trend_score", 0)
+            m_score = scores.get("momentum_score", 0)
+            v_score = scores.get("volatility_score", 0)
+            
+            total_class = "profit" if total > 0 else "loss" if total < 0 else "neutral"
+            
+            score_html = f"""
+            <div class="score-grid">
+                <span class="score-item" title="Trend">T: <b class="{ 'profit' if t_score>0 else 'loss' }">{t_score:+.2f}</b></span>
+                <span class="score-item" title="Momentum">M: <b class="{ 'profit' if m_score>0 else 'loss' }">{m_score:+.2f}</b></span>
+                <span class="score-item" title="Volatility">V: <b class="{ 'profit' if v_score>0 else 'loss' }">{v_score:+.2f}</b></span>
+                <span class="score-total">Total: <b class="{total_class}">{total:+.2f}</b></span>
+            </div>
+            """
+        else:
+            # Fallback for old data
+            rule = p.get("rule_check", {})
+            score_html = f"Old Rule: {rule.get('strength', '-')}"
+
         pred_rows += f"""
         <tr>
             <td>{ts}</td>
             <td><span class="signal {direction_class}">{direction}</span></td>
-            <td>{rule.get('strength', 'N/A')}</td>
+            <td>{score_html}</td>
             <td>{pred.get('confidence', 'N/A')}</td>
-            <td>{pred.get('reasoning', 'N/A')[:50]}...</td>
+            <td class="reason-cell">{pred.get('reasoning', 'N/A')}</td>
         </tr>
         """
     
@@ -214,17 +237,40 @@ def generate_html(data):
             margin: 30px 0 20px;
             font-size: 1.3em;
         }}
-        .updated {{
+        .updated {
             text-align: center;
             color: #666;
             margin-top: 30px;
             font-size: 0.9em;
-        }}
+        }
+        .score-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            font-size: 0.8em;
+            width: 160px;
+        }
+        .score-item {
+            color: #aaa;
+        }
+        .score-total {
+            grid-column: span 2;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: 5px;
+            padding-top: 2px;
+            text-align: center;
+        }
+        .reason-cell {
+            font-size: 0.85em;
+            color: #ccc;
+            max-width: 400px;
+            line-height: 1.4;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🤖 Nikkei 225 AI Trading Dashboard</h1>
+        <h1>🚀 Antigravity Trading Dashboard</h1>
         
         <div class="stats-grid">
             <div class="stat-card">
@@ -265,7 +311,7 @@ def generate_html(data):
                 <tr>
                     <th>Timestamp</th>
                     <th>Signal</th>
-                    <th>Strength</th>
+                    <th>Scores (Antigravity)</th>
                     <th>Confidence</th>
                     <th>Reasoning</th>
                 </tr>
