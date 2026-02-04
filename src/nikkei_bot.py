@@ -48,7 +48,7 @@ class Config:
     
     # Money Management
     COMPOUND_MODE = True
-    LOT_SCALE = 50000  # 1 lot per 50,000 JPY
+    TARGET_LEVERAGE = 10.0  # Effective Leverage Target (e.g. 10x)
 
     # Antigravity Weights
     WEIGHT_TREND = 0.4
@@ -393,11 +393,16 @@ class PortfolioManager:
             stop_mult = strat_conf["stop_mult"]
             target_mult = strat_conf["target_mult"]
             
-            # --- Compound Sizing Logic ---
-            # Rule: 1 Lot per LOT_SCALE (e.g. 50k)
-            current_capital = pf.get("capital", 100000)
+            # --- Money Management (Strict) ---
+            # Calculate max lots based on Target Leverage (e.g. 10x)
+            # 1 Micro Lot Value = Price * 10 JPY
+            # Required Margin (Safety) = Value / Leverage
             
-            lots = int(current_capital / Config.LOT_SCALE)
+            current_capital = pf.get("capital", 100000)
+            contract_value = entry_price * Config.CONTRACT_MULTIPLIER
+            margin_per_lot = contract_value / Config.TARGET_LEVERAGE
+            
+            lots = int(current_capital / margin_per_lot)
             if lots < 1: lots = 1
             
             # Stop/Target dist

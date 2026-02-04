@@ -146,9 +146,11 @@ def run_simulation(nikkei, vix, stop_mult, target_mult):
         s_dist = round_to_tick(atr * stop_mult)
         t_dist = round_to_tick(atr * target_mult)
         
-        # Compound Sizing
-        # Aggressive scaling: 1 lot per Config.LOT_SCALE
-        lots = int(capital / Config.LOT_SCALE)
+        # Compound Sizing (Strict Leverage)
+        contract_val = entry_price * Config.CONTRACT_MULTIPLIER
+        margin_required = contract_val / Config.TARGET_LEVERAGE
+        
+        lots = int(capital / margin_required)
         if lots < 1: lots = 1
         
         position = {
