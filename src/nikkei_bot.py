@@ -410,6 +410,13 @@ class NikkeiBot:
         self.advisor = GeminiAdvisor(os.environ.get("GEMINI_API_KEY"))
 
     def run(self):
+        # --- Guard: Skip execution on Feb 4th, 2026 (Launch Prep) ---
+        now_jst = datetime.now(Config.JST)
+        if now_jst.date() == datetime(2026, 2, 4).date():
+            print(f"🚫 Skipping execution for today ({now_jst.strftime('%Y-%m-%d')}). Launching tomorrow.")
+            return
+        # ------------------------------------------------------------
+
         print("="*60)
         print("🚀 Antigravity Engine v2.1 (Class-Based)")
         print(f"📅 {datetime.now(Config.JST).strftime('%Y-%m-%d %H:%M JST')}")
