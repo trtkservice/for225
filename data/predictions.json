@@ -397,61 +397,28 @@
         "approved": true
       },
       "atr": 1119.29
-    },
-    {
-      "timestamp": "2026-02-04 12:18",
-      "scores": {
-        "trend_score": 1.0,
-        "momentum_score": 0.3,
-        "volatility_score": 0.0,
-        "total_score": 0.52,
-        "details": {
-          "ema_alignment": "Bullish",
-          "rsi_15m": 60.8,
-          "vix": 18.0
-        },
-        "signal": "LONG",
-        "strength": "MEDIUM"
-      },
-      "prediction": {
-        "direction": "LONG",
-        "confidence": "HIGH",
-        "reasoning": "日足トレンドスコア1.0が絶対的な優位性を持つ。15分足RSI 60.8は健全な買い圧力であり、過熱感がないため、上値余地は十分に残されている。VIX 18.0が示すように、市場は安定したリスクオン状態にあるため、高確度のトレンド追随（Continuation Play）としてエントリーを承認する。",
-        "approved": true
-      },
-      "atr": 1119.29
     }
   ],
   "shadow_portfolio": {
-    "capital": 100706.60000000003,
+    "capital": 98000,
     "position": {
-      "direction": "LONG",
-      "entry_date": "2026-02-04 12:18",
-      "entry_price": 54450,
-      "stop": 53890,
-      "target": 55570,
-      "stop_dist": 560,
-      "target_dist": 1120
+      "direction": "SHORT",
+      "entry_date": "2026-02-04 08:35",
+      "entry_price": 54720.66,
+      "stop": 55305.66,
+      "target": 53549.66,
+      "size": 1
     },
     "trades": [
       {
         "entry_date": "2026-02-03 20:51",
         "exit_date": "2026-02-03 22:12",
         "direction": "LONG",
-        "entry_price": 54720.66,
-        "exit_price": 54520.66,
-        "pnl_points": -200.0,
-        "pnl_yen": -2000.0,
+        "entry_price": 54720,
+        "exit_price": 54520,
+        "pnl_points": -200,
+        "pnl_yen": -2000,
         "close_reason": "STOP"
-      },
-      {
-        "entry_date": "2026-02-04 08:35",
-        "exit_date": "2026-02-04 12:18",
-        "direction": "SHORT",
-        "entry_price": 54720.66,
-        "exit_price": 54450,
-        "pnl_yen": 2706,
-        "reason": "CLOSE_SESSION"
       }
     ]
   }

@@ -338,19 +338,31 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
             reason = "TARGET"; exit_p = target
             
         if closed:
-            # PnL = Point Difference * Multiplier
-            point_diff = (exit_p - pos["entry_price"]) if direction == "LONG" else (pos["entry_price"] - exit_p)
-            pnl = point_diff * CONTRACT_MULTIPLIER
+            # PnL Calculation (Standardized)
+            # 1. Round Exit Price
+            exit_p = round_to_tick(exit_p)
             
-            portfolio["capital"] += pnl
+            # 2. Calculate Points Difference
+            point_diff = (exit_p - pos["entry_price"]) if direction == "LONG" else (pos["entry_price"] - exit_p)
+            
+            # 3. Calculate Gross PnL (Yen)
+            gross_pnl = point_diff * CONTRACT_MULTIPLIER
+            
+            # 4. Apply Cost/Slippage (Approx 50 JPY per trade roundtrip)
+            # Trading cost: commission + spread/slippage
+            COST_PER_TRADE = 50
+            net_pnl = gross_pnl - COST_PER_TRADE
+            
+            portfolio["capital"] += net_pnl
             portfolio["trades"].append({
                 "entry_date": pos["entry_date"],
                 "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
                 "direction": direction,
-                "entry_price": pos["entry_price"],
-                "exit_price": exit_p,
-                "pnl_yen": int(pnl),
-                "reason": reason
+                "entry_price": int(pos["entry_price"]),
+                "exit_price": int(exit_p),
+                "pnl_points": int(point_diff),
+                "pnl_yen": int(net_pnl),
+                "close_reason": reason
             })
             portfolio["position"] = None
 

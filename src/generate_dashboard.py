@@ -6,6 +6,7 @@ Generate HTML Dashboard from predictions.json
 import json
 import os
 from datetime import datetime
+import html
 
 DATA_FILE = "data/predictions.json"
 OUTPUT_FILE = "data/dashboard.html"
@@ -64,13 +65,14 @@ def generate_html(data):
             rule = p.get("rule_check", {})
             score_html = f"Old Rule: {rule.get('strength', '-')}"
 
+        reasoning = html.escape(pred.get('reasoning', 'N/A'))
         pred_rows += f"""
         <tr>
             <td>{ts}</td>
             <td><span class="signal {direction_class}">{direction}</span></td>
             <td>{score_html}</td>
             <td>{pred.get('confidence', 'N/A')}</td>
-            <td class="reason-cell">{pred.get('reasoning', 'N/A')}</td>
+            <td class="reason-cell">{reasoning}</td>
         </tr>
         """
     
@@ -79,6 +81,10 @@ def generate_html(data):
     for t in reversed(trades[-10:]):  # Last 10 trades
         pnl = t.get("pnl_yen", 0)
         pnl_class = "profit" if pnl > 0 else "loss"
+        
+        # Unified Reason Field
+        close_reason = t.get('close_reason') or t.get('reason') or 'N/A'
+        
         trade_rows += f"""
         <tr>
             <td>{t.get('entry_date', 'N/A')}</td>
@@ -87,7 +93,7 @@ def generate_html(data):
             <td>{t.get('entry_price', 0):,.0f}</td>
             <td>{t.get('exit_price', 0):,.0f}</td>
             <td class="{pnl_class}">¥{pnl:+,.0f}</td>
-            <td>{t.get('close_reason', 'N/A')}</td>
+            <td>{close_reason}</td>
         </tr>
         """
     
