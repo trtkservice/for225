@@ -102,10 +102,15 @@ def run_simulation(nikkei, vix, stop_mult, target_mult):
                 if not exit_price: exit_price = close_p # Time stop close
                 
                 # Calc PnL
+                # Compound: Lots logic was decided at entry, stored in position
+                lots = position.get('lots', 1)
+                
                 diff = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
-                bn = (diff * Config.CONTRACT_MULTIPLIER) - Config.COST_PER_TRADE
-                capital += bn
-                trades.append(bn)
+                gross = (diff * Config.CONTRACT_MULTIPLIER * lots)
+                net = gross - (Config.COST_PER_TRADE * lots)
+                
+                capital += net
+                trades.append(net)
                 position = None
                 continue
 
@@ -141,12 +146,17 @@ def run_simulation(nikkei, vix, stop_mult, target_mult):
         s_dist = round_to_tick(atr * stop_mult)
         t_dist = round_to_tick(atr * target_mult)
         
+        # Compound Sizing
+        lots = int(capital / 100000)
+        if lots < 1: lots = 1
+        
         position = {
             'type': signal,
             'entry': entry_price,
             'stop': entry_price - s_dist if signal == "LONG" else entry_price + s_dist,
             'target': entry_price + t_dist if signal == "LONG" else entry_price - t_dist,
-            'days': 0
+            'days': 0,
+            'lots': lots
         }
         
     return capital, trades

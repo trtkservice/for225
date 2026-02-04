@@ -294,28 +294,24 @@ class PortfolioManager:
         
         if os.path.exists(self.file):
             try:
-                with open(self.file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # Migration: If old structure, convert to new structure
-                    if "portfolios" not in data:
-                        data["portfolios"] = {
-                            key: default_pf.copy() for key in Config.STRATEGIES.keys()
-                        }
-                    return data
-            except:
-                pass
-                
-        # Fresh Start
+        self.file_path = Config.DATA_FILE
+        self.data = self._load_data()
+
+    def _load_data(self):
+        if os.path.exists(self.file_path):
+            with open(self.file_path, 'r') as f:
+                return json.load(f)
         return {
-            "predictions": [],
+            "predictions": [], 
             "portfolios": {
-                key: default_pf.copy() for key in Config.STRATEGIES.keys()
+                "optimized": {"capital": 100000, "position": None, "trades": []},
+                "raptor": {"capital": 100000, "position": None, "trades": []}
             }
         }
 
     def save(self):
-        os.makedirs(os.path.dirname(self.file), exist_ok=True)
-        with open(self.file, 'w', encoding='utf-8') as f:
+        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+        with open(self.file_path, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def update_session(self, current_price_raw: float, low: float, high: float, atr: float):
@@ -363,9 +359,10 @@ class PortfolioManager:
                 reason = "TIME_STOP"
                 
             if exit_price is not None:
+                lots = pos.get("lots", 1)  # Default 1 lot
                 p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
-                net_pnl = gross_pnl - Config.COST_PER_TRADE
+                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * lots
+                net_pnl = gross_pnl - (Config.COST_PER_TRADE * lots)
                 
                 pf["capital"] += net_pnl
                 pf["trades"].append({
@@ -374,13 +371,14 @@ class PortfolioManager:
                     "direction": direction,
                     "entry_price": int(entry),
                     "exit_price": int(exit_price),
+                    "lots": lots,
                     "pnl_points": int(p_diff),
                     "pnl_yen": int(net_pnl),
                     "close_reason": reason,
                     "days_held": days_held
                 })
                 pf["position"] = None
-                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+}")
+                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+,} (Lots:{lots})")
             else:
                 print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held}")
             
@@ -403,6 +401,15 @@ class PortfolioManager:
             stop_mult = strat_conf["stop_mult"]
             target_mult = strat_conf["target_mult"]
             
+            # --- Compound Sizing Logic ---
+            # Rule: 1 Lot per 100,000 JPY
+            current_capital = pf.get("capital", 100000)
+            lot_scale = 100000
+            
+            lots = int(current_capital / lot_scale)
+            if lots < 1: lots = 1
+            
+            # Stop/Target dist
             stop_dist = round_to_tick(safe_atr * stop_mult)
             target_dist = round_to_tick(safe_atr * target_mult)
             
@@ -415,10 +422,11 @@ class PortfolioManager:
                 "entry_price": int(entry_price),
                 "stop": int(stop_price),
                 "target": int(target_price),
-                "strategy": strat_key
+                "strategy": strat_key,
+                "lots": lots
             }
             self.data["portfolios"][strat_key] = pf
-            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Stop:{stop_price} Target:{target_price})")
+            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Lots:{lots} Stop:{stop_price} Target:{target_price})")
 
     def log_prediction(self, scores, prediction, atr):
         # Allow JSON serialization of scores (convert numpy types)
@@ -446,10 +454,11 @@ class NikkeiBot:
         self.advisor = GeminiAdvisor(os.environ.get("GEMINI_API_KEY"))
 
     def run(self):
-        # --- Guard: Skip execution on Feb 4th, 2026 (Launch Prep) ---
+        # --- Guard: Skip execution until Feb 5th, 2026 (Launch Prep Phase) ---
         now_jst = datetime.now(Config.JST)
-        if now_jst.date() == datetime(2026, 2, 4).date():
-            print(f"🚫 Skipping execution for today ({now_jst.strftime('%Y-%m-%d')}). Launching tomorrow.")
+        # Skip if today is 2/4 or 2/5 (or before)
+        if now_jst.date() <= datetime(2026, 2, 5).date():
+            print(f"🚫 Skipping execution for today ({now_jst.strftime('%Y-%m-%d')}). Launch Prep in progress.")
             return
         # ------------------------------------------------------------
 
