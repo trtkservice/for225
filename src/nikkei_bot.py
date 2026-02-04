@@ -11,27 +11,15 @@ import pytz
 import pandas as pd
 import numpy as np
 
-# Market data
-try:
-    import yfinance as yf
-except ImportError:
-    print("Installing yfinance...")
-    os.system("pip install yfinance")
-    import yfinance as yf
-
-# Gemini AI
-try:
-    import google.generativeai as genai
-except ImportError:
-    print("Installing google-generativeai...")
-    os.system("pip install google-generativeai")
-    import google.generativeai as genai
-
 # Constants
 JST = pytz.timezone('Asia/Tokyo')
 DATA_FILE = "data/predictions.json"
 SHADOW_CAPITAL = 100000
 POSITION_SIZE = 1
+
+# Trading Specs (Nikkei 225 Micro)
+CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
+TICK_SIZE = 5             # Minimum fluctuation
 
 # Tickers
 TICKERS = {
@@ -59,7 +47,6 @@ def fetch_data():
             data[f"{name}_daily"] = pd.DataFrame()
 
     # 2. Fetch Intraday Data (for Momentum/FAST) - Last 5 days, 15m intervals
-    # Only for Nikkei Futures to gauge momentum
     try:
         t = yf.Ticker(TICKERS["nikkei_futures"])
         hist_15m = t.history(period="5d", interval="15m")
@@ -73,10 +60,16 @@ def fetch_data():
 # --- Technical Analysis Library ---
 
 def calc_rsi(series, period=14):
+    """Calculate RSI using Wilder's Smoothing (Standard)."""
     delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
+    gain = (delta.where(delta > 0, 0))
+    loss = (-delta.where(delta < 0, 0))
+    
+    # Use exponential moving average (Wilder's smoothing)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    
+    rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
 def calc_macd(series, fast=12, slow=26, signal=9):
@@ -332,19 +325,22 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
         elif hit_target:
             reason = "TARGET"; exit_p = target
             
-        # Calculate PnL
-        pnl = (exit_p - pos["entry_price"]) * 10 if direction == "LONG" else (pos["entry_price"] - exit_p) * 10
-        portfolio["capital"] += pnl
-        portfolio["trades"].append({
-            "entry_date": pos["entry_date"],
-            "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
-            "direction": direction,
-            "entry_price": pos["entry_price"],
-            "exit_price": exit_p,
-            "pnl_yen": int(pnl),
-            "reason": reason
-        })
-        portfolio["position"] = None
+        if closed:
+            # PnL = Point Difference * Multiplier
+            point_diff = (exit_p - pos["entry_price"]) if direction == "LONG" else (pos["entry_price"] - exit_p)
+            pnl = point_diff * CONTRACT_MULTIPLIER
+            
+            portfolio["capital"] += pnl
+            portfolio["trades"].append({
+                "entry_date": pos["entry_date"],
+                "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
+                "direction": direction,
+                "entry_price": pos["entry_price"],
+                "exit_price": exit_p,
+                "pnl_yen": int(pnl),
+                "reason": reason
+            })
+            portfolio["position"] = None
 
     # Open New Position
     if prediction["direction"] in ["LONG", "SHORT"] and not portfolio.get("position"):
