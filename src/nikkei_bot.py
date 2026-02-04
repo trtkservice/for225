@@ -46,6 +46,10 @@ class Config:
         }
     }
     
+    # Money Management
+    COMPOUND_MODE = True
+    LOT_SCALE = 50000  # 1 lot per 50,000 JPY
+
     # Antigravity Weights
     WEIGHT_TREND = 0.4
     WEIGHT_MOMENTUM = 0.4
@@ -390,11 +394,10 @@ class PortfolioManager:
             target_mult = strat_conf["target_mult"]
             
             # --- Compound Sizing Logic ---
-            # Rule: 1 Lot per 100,000 JPY
+            # Rule: 1 Lot per LOT_SCALE (e.g. 50k)
             current_capital = pf.get("capital", 100000)
-            lot_scale = 100000
             
-            lots = int(current_capital / lot_scale)
+            lots = int(current_capital / Config.LOT_SCALE)
             if lots < 1: lots = 1
             
             # Stop/Target dist
