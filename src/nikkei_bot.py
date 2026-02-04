@@ -1,460 +1,458 @@
 #!/usr/bin/env python3
 """
-Nikkei 225 Trading Bot - Antigravity Engine (Advanced Technical Analysis)
+Nikkei 225 Trading Bot - Antigravity Engine v2.1 (Refactored)
+Author: Antigravity Agent
 """
 
 import os
 import json
 import sys
 import math
-from datetime import datetime, timedelta
+import re
+from datetime import datetime
 import pytz
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import google.generativeai as genai
 
-# Constants
-JST = pytz.timezone('Asia/Tokyo')
-DATA_FILE = "data/predictions.json"
-SHADOW_CAPITAL = 100000
-POSITION_SIZE = 1
+# --- Configuration & Constants ---
 
-# Trading Specs (Nikkei 225 Micro)
-CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
-TICK_SIZE = 5             # Minimum fluctuation
-
-# Tickers
-TICKERS = {
-    "nikkei_futures": "NKD=F",
-    "nikkei_index": "^N225",
-    "sp500": "^GSPC",
-    "dow": "^DJI",
-    "vix": "^VIX",
-    "usdjpy": "JPY=X",
-    "us10y": "^TNX",
-}
-
-def round_to_tick(price):
-    """Round price to the nearest tick size."""
-    return round(price / TICK_SIZE) * TICK_SIZE
-
-def fetch_data():
-    """Fetch both Daily and Intraday data."""
-    data = {}
+class Config:
+    # System
+    JST = pytz.timezone('Asia/Tokyo')
+    DATA_FILE = "data/predictions.json"
     
-    # 1. Fetch Daily Data (for Trend/DEEP) - Last 1 year
-    for name, ticker in TICKERS.items():
-        try:
-            t = yf.Ticker(ticker)
-            hist = t.history(period="1y")
-            data[f"{name}_daily"] = hist
-        except Exception as e:
-            print(f"Error fetching daily {name}: {e}")
-            data[f"{name}_daily"] = pd.DataFrame()
-
-    # 2. Fetch Intraday Data (for Momentum/FAST) - Last 5 days, 15m intervals
-    try:
-        t = yf.Ticker(TICKERS["nikkei_futures"])
-        hist_15m = t.history(period="5d", interval="15m")
-        data["nikkei_15m"] = hist_15m
-    except Exception as e:
-        print(f"Error fetching intraday Nikkei: {e}")
-        data["nikkei_15m"] = pd.DataFrame()
-
-    return data
-
-# --- Technical Analysis Library ---
-
-def calc_rsi(series, period=14):
-    """Calculate RSI using Wilder's Smoothing (Standard)."""
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0))
-    loss = (-delta.where(delta < 0, 0))
+    # Trading Specs (Nikkei 225 Micro)
+    CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
+    TICK_SIZE = 5             # Minimum fluctuation
+    COST_PER_TRADE = 50       # Estimated commission + slippage per trade
     
-    # Use exponential moving average (Wilder's smoothing)
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    # Strategy Parameters
+    SHADOW_CAPITAL = 100000
+    RISK_STOP_ATR_MULT = 0.6  # Optimized Parameter
+    RISK_TARGET_ATR_MULT = 1.2 # Optimized Parameter
     
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-def calc_macd(series, fast=12, slow=26, signal=9):
-    exp1 = series.ewm(span=fast, adjust=False).mean()
-    exp2 = series.ewm(span=slow, adjust=False).mean()
-    macd = exp1 - exp2
-    signal_line = macd.ewm(span=signal, adjust=False).mean()
-    return macd, signal_line, macd - signal_line
-
-def calc_bollinger(series, period=20, std_dev=2):
-    sma = series.rolling(window=period).mean()
-    std = series.rolling(window=period).std()
-    upper = sma + (std * std_dev)
-    lower = sma - (std * std_dev)
-    return upper, sma, lower
-
-def calc_atr(hist, period=14):
-    high_low = hist['High'] - hist['Low']
-    high_close = (hist['High'] - hist['Close'].shift()).abs()
-    low_close = (hist['Low'] - hist['Close'].shift()).abs()
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-    return true_range.rolling(window=period).mean()
-
-# --- Scoring Engine ---
-
-def calculate_antigravity_score(data):
-    """
-    Calculate integrated score (-1.0 to +1.0)
-    Layer 1: Trend (Daily)
-    Layer 2: Momentum (15m)
-    Layer 3: Volatility/Risk
-    """
-    scores = {
-        "trend_score": 0,
-        "momentum_score": 0,
-        "volatility_score": 0,
-        "total_score": 0,
-        "details": {}
+    # Antigravity Weights
+    WEIGHT_TREND = 0.4
+    WEIGHT_MOMENTUM = 0.4
+    WEIGHT_VOLATILITY = 0.2
+    
+    # Tickers
+    TICKERS = {
+        "nikkei_futures": "NKD=F",
+        "nikkei_index": "^N225",
+        "vix": "^VIX",
     }
-    
-    nikkei_daily = data.get("nikkei_futures_daily")
-    nikkei_15m = data.get("nikkei_15m")
-    vix_daily = data.get("vix_daily")
-    
-    if nikkei_daily is None or nikkei_daily.empty:
-        return scores
 
-    # --- Layer 1: Trend (DEEP) ---
-    # EMA Analysis
-    close = nikkei_daily['Close']
-    if len(close) < 200:
-        return scores # Not enough data
+# --- Helper Functions ---
+
+def round_to_tick(price: float) -> int:
+    """Round price to the nearest tick size."""
+    if pd.isna(price): return 0
+    return int(round(price / Config.TICK_SIZE) * Config.TICK_SIZE)
+
+# --- Components ---
+
+class MarketDataManager:
+    """Handles data fetching from Yahoo Finance."""
+    
+    @staticmethod
+    def fetch_all():
+        data = {}
+        # 1. Daily Data (1y)
+        for name, ticker in Config.TICKERS.items():
+            try:
+                t = yf.Ticker(ticker)
+                data[f"{name}_daily"] = t.history(period="1y")
+            except Exception as e:
+                print(f"⚠️ Error fetching {name}: {e}")
+                data[f"{name}_daily"] = pd.DataFrame()
         
-    ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
-    ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
-    ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1]
-    current_price = close.iloc[-1]
-    
-    trend_val = 0
-    if current_price > ema20: trend_val += 0.3
-    if current_price > ema50: trend_val += 0.3
-    if current_price > ema200: trend_val += 0.4
-    if ema20 > ema50: trend_val += 0.2  # Golden Cross state
-    
-    # Normalize to -1.0 to 1.0 (approx)
-    if current_price < ema20: trend_val -= 0.3
-    if current_price < ema50: trend_val -= 0.3
-    if current_price < ema200: trend_val -= 0.4
-    if ema20 < ema50: trend_val -= 0.2
-    
-    scores["trend_score"] = round(np.clip(trend_val, -1.0, 1.0), 3)
-    scores["details"]["ema_alignment"] = "Bullish" if trend_val > 0 else "Bearish"
-
-    # --- Layer 2: Momentum (FAST) ---
-    mom_val = 0
-    if nikkei_15m is not None and not nikkei_15m.empty and len(nikkei_15m) > 30:
-        close_15m = nikkei_15m['Close']
-        
-        # RSI (14)
-        rsi = calc_rsi(close_15m).iloc[-1]
-        scores["details"]["rsi_15m"] = round(rsi, 1) if not np.isnan(rsi) else 50.0
-        
-        if rsi > 70:
-            mom_val -= 0.3  # Overbought, risk of pullback
-        elif rsi < 30:
-            mom_val += 0.3  # Oversold, bounce candidate
-        elif 50 < rsi <= 70:
-            mom_val += 0.2  # Strong momentum
-        elif 30 <= rsi < 50:
-            mom_val -= 0.2  # Weak momentum
-            
-        # MACD (15m)
-        macd, signal, hist = calc_macd(close_15m)
-        last_hist = hist.iloc[-1]
-        prev_hist = hist.iloc[-2]
-        
-        if last_hist > 0 and last_hist > prev_hist:
-            mom_val += 0.4  # Accelerating Up
-        elif last_hist > 0 and last_hist < prev_hist:
-            mom_val += 0.1  # Decelerating Up
-        elif last_hist < 0 and last_hist < prev_hist:
-            mom_val -= 0.4  # Accelerating Down
-        elif last_hist < 0 and last_hist > prev_hist:
-            mom_val -= 0.1  # Decelerating Down
-            
-    scores["momentum_score"] = round(np.clip(mom_val, -1.0, 1.0), 3)
-
-    # --- Layer 3: Risk / Volatility ---
-    vol_val = 0
-    if vix_daily is not None and not vix_daily.empty:
-        vix = vix_daily['Close'].iloc[-1]
-        scores["details"]["vix"] = round(vix, 2)
-        
-        if vix < 15: vol_val += 0.2     # Risk On
-        elif vix < 20: vol_val += 0.0
-        elif vix > 30: vol_val -= 0.8   # Extreme Panic
-        elif vix > 20: vol_val -= 0.3   # Caution
-    else:
-        scores["details"]["vix"] = 20.0 # Default neutral
-        
-    scores["volatility_score"] = round(vol_val, 3)
-    
-    # --- Total Integration ---
-    # Weight: Trend 40%, Momentum 40%, Volatility 20%
-    total = (scores["trend_score"] * 0.4) + (scores["momentum_score"] * 0.4) + (scores["volatility_score"] * 0.2)
-    scores["total_score"] = round(total, 3)
-    
-    # Signal Generation
-    if total > 0.3: scores["signal"] = "LONG"
-    elif total < -0.3: scores["signal"] = "SHORT"
-    else: scores["signal"] = "WAIT"
-    
-    scores["strength"] = "STRONG" if abs(total) > 0.6 else "MEDIUM" if abs(total) > 0.3 else "WEAK"
-    
-    return scores
-
-# --- Gemini Prompt ---
-
-def create_antigravity_prompt(scores, market_data):
-    prompt = f"""あなたはヘッジファンドのトップトレーダーです。
-高度なテクニカル分析エンジン「Antigravity」が以下の市場解析結果を出しました。
-このデータを元に、最終的なエントリー判断を行ってください。
-
-## 📊 Antigravity 解析スコア (-1.0 〜 +1.0)
-| レイヤー | スコア | 評価 | 意味 |
-|:---|:---|:---|:---|
-| 🌊 Trend (日足) | **{scores['trend_score']}** | {scores['details'].get('ema_alignment')} | { '上昇トレンド' if scores['trend_score'] > 0 else '下降トレンド' } |
-| 🚀 Momentum (15分足) | **{scores['momentum_score']}** | RSI: {scores['details'].get('rsi_15m')} | { '短期上昇圧力' if scores['momentum_score'] > 0 else '短期下落圧力' } |
-| ⚠️ Volatility (VIX) | **{scores['volatility_score']}** | VIX: {scores['details'].get('vix')} | { 'リスクオン' if scores['volatility_score'] >= 0 else 'リスクオフ（警戒）' } |
-| **💎 総合スコア** | **{scores['total_score']}** | **{scores['signal']}** | (基準: >0.3でBUY, <-0.3でSELL) |
-
-## あなたのタスク
-エンジンの算出結果（数学的根拠）を、ファンダメンタルズや市場心理の観点から**最終チェック**してください。
-
-1. **スコアの整合性確認**: 短期と長期のスコアが矛盾している場合（例: Trend↑ Momentum↓）、どう判断するか？（通常はTrend優先だが、Momentumが極端な場合は反転の兆しか？）
-2. **ブラックスワン回避**: 突発的なリスク要因がないか考慮（プロンプト等には含まれませんが、一般的な市場知識として「通常の動きか」を判断）
-
-## 出力形式（JSON）
-```json
-{{
-  "approved": true,
-  "final_direction": "{scores['signal']}",
-  "reasoning": "Trendスコアが強く、15分足のRSIも過熱感がないため、上値余地ありと判断。VIXも安定している。",
-  "risk_alert": "なし"
-}}
-```
-"""
-    return prompt
-
-# --- Main Functions ---
-
-def call_gemini(prompt, api_key):
-    genai.configure(api_key=api_key)
-    model_name = 'gemini-flash-latest'
-    try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        print(f"⚠️ API Error: {e}")
+        # 2. Intraday Data (5d, 15m) for Momentum
         try:
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt)
-            return response.text
+            t = yf.Ticker(Config.TICKERS["nikkei_futures"])
+            data["nikkei_15m"] = t.history(period="5d", interval="15m")
+        except Exception as e:
+            print(f"⚠️ Error fetching intraday: {e}")
+            data["nikkei_15m"] = pd.DataFrame()
+            
+        return data
+
+class TechnicalAnalysis:
+    """Statistical Calculation Library."""
+    
+    @staticmethod
+    def calc_rsi(series, period=14):
+        delta = series.diff()
+        gain = (delta.where(delta > 0, 0))
+        loss = (-delta.where(delta < 0, 0))
+        avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+        rs = avg_gain / avg_loss
+        return 100 - (100 / (1 + rs))
+
+    @staticmethod
+    def calc_macd(series, fast=12, slow=26, signal=9):
+        exp1 = series.ewm(span=fast, adjust=False).mean()
+        exp2 = series.ewm(span=slow, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        return macd, signal_line, macd - signal_line
+
+    @staticmethod
+    def calc_atr(hist, period=14):
+        high_low = hist['High'] - hist['Low']
+        high_close = (hist['High'] - hist['Close'].shift()).abs()
+        low_close = (hist['Low'] - hist['Close'].shift()).abs()
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        return true_range.rolling(window=period).mean()
+
+class AntigravityEngine:
+    """
+    Simulates physical forces in the market.
+    Trend (River), Momentum (Wind), Volatility (Temperature).
+    """
+    
+    def __init__(self, market_data):
+        self.data = market_data
+        self.scores = {
+            "trend": 0.0, "momentum": 0.0, "volatility": 0.0, 
+            "total": 0.0, "signal": "WAIT", "strength": "WEAK",
+            "details": {}
+        }
+
+    def analyze(self):
+        self._analyze_trend()
+        self._analyze_momentum()
+        self._analyze_volatility()
+        self._integrate()
+        return self.scores
+
+    def _analyze_trend(self):
+        df = self.data.get("nikkei_futures_daily")
+        if df is None or len(df) < 200: return
+
+        close = df['Close']
+        ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
+        ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
+        ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1]
+        price = close.iloc[-1]
+        
+        val = 0
+        # Bullish factors
+        if price > ema20: val += 0.3
+        if price > ema50: val += 0.3
+        if price > ema200: val += 0.4
+        if ema20 > ema50: val += 0.2
+        
+        # Bearish factors
+        if price < ema20: val -= 0.3
+        if price < ema50: val -= 0.3
+        if price < ema200: val -= 0.4
+        if ema20 < ema50: val -= 0.2
+        
+        self.scores["trend"] = round(np.clip(val, -1.0, 1.0), 3)
+        self.scores["details"]["trend_summary"] = "Bullish" if val > 0 else "Bearish"
+
+    def _analyze_momentum(self):
+        df = self.data.get("nikkei_15m")
+        val = 0
+        if df is not None and len(df) > 30:
+            close = df['Close']
+            
+            # RSI
+            rsi = TechnicalAnalysis.calc_rsi(close).iloc[-1]
+            self.scores["details"]["rsi"] = round(rsi, 1) if not np.isnan(rsi) else 50
+            
+            if rsi > 70: val -= 0.3
+            elif rsi < 30: val += 0.3
+            elif rsi > 50: val += 0.2
+            else: val -= 0.2
+            
+            # MACD
+            _, _, hist = TechnicalAnalysis.calc_macd(close)
+            if hist.iloc[-1] > 0 and hist.iloc[-1] > hist.iloc[-2]: val += 0.4
+            elif hist.iloc[-1] < 0 and hist.iloc[-1] < hist.iloc[-2]: val -= 0.4
+            
+        self.scores["momentum"] = round(np.clip(val, -1.0, 1.0), 3)
+
+    def _analyze_volatility(self):
+        df = self.data.get("vix_daily")
+        val = 0
+        vix = 20.0
+        if df is not None and not df.empty:
+            vix = df['Close'].iloc[-1]
+            if vix < 15: val += 0.2
+            elif vix > 20: val -= 0.3
+            elif vix > 30: val -= 0.8
+        
+        self.scores["details"]["vix"] = round(vix, 2)
+        self.scores["volatility"] = round(val, 3)
+
+    def _integrate(self):
+        total = (self.scores["trend"] * Config.WEIGHT_TREND) + \
+                (self.scores["momentum"] * Config.WEIGHT_MOMENTUM) + \
+                (self.scores["volatility"] * Config.WEIGHT_VOLATILITY)
+        
+        self.scores["total"] = round(total, 3)
+        
+        if total > 0.3: self.scores["signal"] = "LONG"
+        elif total < -0.3: self.scores["signal"] = "SHORT"
+        else: self.scores["signal"] = "WAIT"
+        
+        self.scores["strength"] = "STRONG" if abs(total) > 0.6 else "MEDIUM"
+
+class GeminiAdvisor:
+    """Interfaces with Google Gemini AI."""
+    
+    def __init__(self, api_key):
+        self.api_key = api_key
+        if api_key:
+            genai.configure(api_key=api_key)
+
+    def consult(self, scores, market_data):
+        if not self.api_key:
+            return {"approved": True, "reasoning": "No API Key (Simulated)", "direction": scores["signal"]}
+            
+        prompt = self._create_prompt(scores)
+        
+        # Multiple model fallback
+        for model_name in ['gemini-flash-latest', 'gemini-pro']:
+            try:
+                model = genai.GenerativeModel(model_name)
+                res = model.generate_content(prompt)
+                return self._parse_response(res.text, scores["signal"])
+            except Exception as e:
+                print(f"⚠️  AI Model {model_name} Error: {e}")
+                
+        return {"approved": True, "reasoning": "AI Unavailable", "direction": scores["signal"]}
+
+    def _create_prompt(self, scores):
+        return f"""
+        Role: Senior Hedge Fund Manager.
+        Task: Review Antigravity Engine Scores and Approve/Reject Trade.
+        
+        DATA:
+        - Trend (Daily): {scores['trend']} ({scores['details'].get('trend_summary')})
+        - Momentum (15m): {scores['momentum']} (RSI: {scores['details'].get('rsi')})
+        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix')})
+        - TOTAL SCORE: {scores['total']}
+        - PROPOSED SIGNAL: {scores['signal']}
+        
+        OUTPUT (JSON Only):
+        {{
+            "approved": true/false,
+            "final_direction": "LONG/SHORT/WAIT",
+            "reasoning": "Short succinct analysis."
+        }}
+        """
+
+    def _parse_response(self, text, default_signal):
+        default = {"direction": default_signal, "approved": True, "reasoning": "Parse Failed"}
+        if not text: return default
+        try:
+            match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                return {
+                    "direction": data.get("final_direction", default_signal),
+                    "approved": data.get("approved", True),
+                    "reasoning": data.get("reasoning", "")
+                }
         except:
-            return None
+            pass
+        return default
 
-def parse_ai_response(response_text, rule_signal="WAIT"):
-    default = {"direction": rule_signal, "confidence": "MEDIUM", "approved": True, "reasoning": "Fallback"}
-    if not response_text: return default
-    try:
-        import re
-        match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-        if match:
-            parsed = json.loads(match.group())
-            return {
-                "direction": parsed.get("final_direction", rule_signal),
-                "confidence": "HIGH" if parsed.get("approved") else "LOW",
-                "reasoning": parsed.get("reasoning", ""),
-                "approved": parsed.get("approved", True)
-            }
-    except Exception:
-        pass
-    return default
-
-def load_predictions():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f: return json.load(f)
-    return {"predictions": [], "shadow_portfolio": {"capital": SHADOW_CAPITAL, "position": None, "trades": []}}
-
-def save_predictions(data):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, 'w', encoding='utf-8') as f: json.dump(data, f, ensure_ascii=False, indent=2)
-
-def update_shadow_portfolio(data, prediction, market_data, atr_val):
-    portfolio = data.get("shadow_portfolio", {"capital": SHADOW_CAPITAL, "position": None, "trades": []})
+class PortfolioManager:
+    """Manages Shadow Portfolio (JSON Database)."""
     
-    # Get Prices
-    nikkei = market_data.get("nikkei_futures_daily")
-    if nikkei is None or nikkei.empty: return data
-    
-    last_row = nikkei.iloc[-1]
-    price = last_row['Close']
-    high = last_row['High']
-    low = last_row['Low']
-    
-    entry_price = round_to_tick(price) # Use close as "current" for simulation entry
+    def __init__(self):
+        self.file = Config.DATA_FILE
+        self.data = self._load()
 
-    # Manage Open Position (Force Close at session end)
-    if portfolio.get("position"):
-        pos = portfolio["position"]
-        direction = pos["direction"]
-        stop = pos["stop"]
-        target = pos["target"]
+    def _load(self):
+        if os.path.exists(self.file):
+            with open(self.file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return {"predictions": [], "shadow_portfolio": {"capital": Config.SHADOW_CAPITAL, "position": None, "trades": []}}
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.file), exist_ok=True)
+        with open(self.file, 'w', encoding='utf-8') as f:
+            json.dump(self.data, f, ensure_ascii=False, indent=2)
+
+    def update_session(self, current_price_raw, low, high, atr):
+        """
+        1. Close existing positions (Session Close).
+        2. Return clean slate for new entry.
+        """
+        pf = self.data["shadow_portfolio"]
         
-        hit_stop = False
-        hit_target = False
-        
-        # Conservative check
-        if direction == "LONG":
-            hit_stop = low <= stop
-            hit_target = high >= target
-        else:
-            hit_stop = high >= stop
-            hit_target = low <= target
+        # --- Close Strategy ---
+        if pf.get("position"):
+            pos = pf["position"]
+            direction = pos["direction"]
+            entry = pos["entry_price"]
+            stop = pos["stop"]
+            target = pos["target"]
             
-        closed = True  # ALWAYS close at the end of session (Day/Night separation)
-        reason = "CLOSE_SESSION" # Default reason
-        exit_p = entry_price # Default exit at session close price
-        
-        if hit_stop:
-            reason = "STOP"; exit_p = stop
-            # If hit stop, check if we prioritize stop over target (conservative)
-            if hit_target:
-                 # Dual hit: conservative assume STOP
-                 pass
-        elif hit_target:
-            reason = "TARGET"; exit_p = target
+            # Outcome Check
+            hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
+            hit_target = (high >= target) if direction == "LONG" else (low <= target)
             
-        if closed:
-            # PnL Calculation (Standardized)
-            # 1. Round Exit Price
-            exit_p = round_to_tick(exit_p)
+            exit_price = round_to_tick(current_price_raw) # Default: Session Close
+            reason = "CLOSE_SESSION"
             
-            # 2. Calculate Points Difference
-            point_diff = (exit_p - pos["entry_price"]) if direction == "LONG" else (pos["entry_price"] - exit_p)
+            if hit_stop:
+                # Conservative Rule: If both hit, assume STOP
+                exit_price = stop
+                reason = "STOP"
+            elif hit_target:
+                exit_price = target
+                reason = "TARGET"
+                
+            # Calc PnL
+            exit_price = round_to_tick(exit_price)
+            point_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
+            gross_pnl = point_diff * Config.CONTRACT_MULTIPLIER
+            net_pnl = gross_pnl - Config.COST_PER_TRADE
             
-            # 3. Calculate Gross PnL (Yen)
-            gross_pnl = point_diff * CONTRACT_MULTIPLIER
-            
-            # 4. Apply Cost/Slippage (Approx 50 JPY per trade roundtrip)
-            # Trading cost: commission + spread/slippage
-            COST_PER_TRADE = 50
-            net_pnl = gross_pnl - COST_PER_TRADE
-            
-            portfolio["capital"] += net_pnl
-            portfolio["trades"].append({
+            pf["capital"] += net_pnl
+            pf["trades"].append({
                 "entry_date": pos["entry_date"],
-                "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
+                "exit_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
                 "direction": direction,
-                "entry_price": int(pos["entry_price"]),
-                "exit_price": int(exit_p),
+                "entry_price": int(entry),
+                "exit_price": int(exit_price),
                 "pnl_points": int(point_diff),
                 "pnl_yen": int(net_pnl),
                 "close_reason": reason
             })
-            portfolio["position"] = None
+            pf["position"] = None
+        
+        self.data["shadow_portfolio"] = pf
 
-    # Open New Position
-    if prediction["direction"] in ["LONG", "SHORT"] and not portfolio.get("position"):
-        # Safer ATR handling
-        safe_atr = atr_val if not math.isnan(atr_val) else 400.0
+    def open_position(self, prediction, current_price_raw, atr_val):
+        """Open a new position if signal exists."""
+        signal = prediction["direction"]
+        if signal not in ["LONG", "SHORT"]: return
         
-        # Optimized params (Stop 0.6 / Target 1.2)
-        stop_dist = round_to_tick(safe_atr * 0.6)
-        target_dist = round_to_tick(safe_atr * 1.2)
+        pf = self.data["shadow_portfolio"]
+        if pf.get("position"): return # Should be empty due to update_session, but safety check
+
+        entry_price = round_to_tick(current_price_raw)
+        safe_atr = atr_val if not pd.isna(atr_val) else 400.0
         
-        stop_price = entry_price - stop_dist if prediction["direction"] == "LONG" else entry_price + stop_dist
-        target_price = entry_price + target_dist if prediction["direction"] == "LONG" else entry_price - target_dist
+        # Risk Management (Optimized Ratios)
+        stop_dist = round_to_tick(safe_atr * Config.RISK_STOP_ATR_MULT)
+        target_dist = round_to_tick(safe_atr * Config.RISK_TARGET_ATR_MULT)
         
-        portfolio["position"] = {
-            "direction": prediction["direction"],
-            "entry_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
-            "entry_price": entry_price,
-            "stop": stop_price,
-            "target": target_price,
-            "stop_dist": stop_dist,
-            "target_dist": target_dist
+        stop_price = entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist
+        target_price = entry_price + target_dist if signal == "LONG" else entry_price - target_dist
+        
+        pf["position"] = {
+            "direction": signal,
+            "entry_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
+            "entry_price": int(entry_price),
+            "stop": int(stop_price),
+            "target": int(target_price),
+            "stop_dist": int(stop_dist),
+            "target_dist": int(target_dist)
+        }
+        self.data["shadow_portfolio"] = pf
+
+    def log_prediction(self, scores, prediction, atr):
+        # Allow JSON serialization of scores (convert numpy types)
+        clean_scores = {
+            "trend_score": float(scores["trend"]),
+            "momentum_score": float(scores["momentum"]),
+            "volatility_score": float(scores["volatility"]),
+            "total_score": float(scores["total"]),
+            "details": scores["details"]
         }
         
-    data["shadow_portfolio"] = portfolio
-    return data
+        self.data["predictions"].append({
+            "timestamp": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
+            "scores": clean_scores,
+            "prediction": prediction,
+            "atr": round(atr, 2)
+        })
 
-def main():
-    print("="*60)
-    print("🚀 Antigravity Engine v2.0 Starting...")
-    print(f"📅 {datetime.now(JST).strftime('%Y-%m-%d %H:%M JST')}")
-    print("="*60)
+# --- Main App ---
 
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("❌ No API Key"); sys.exit(1)
+class NikkeiBot:
+    def __init__(self):
+        self.market = MarketDataManager()
+        self.portfolio = PortfolioManager()
+        self.advisor = GeminiAdvisor(os.environ.get("GEMINI_API_KEY"))
 
-    # 1. Fetch Data
-    print("📥 Fetching Market Data...")
-    raw_data = fetch_data()
-    
-    # 2. Calculate Technical Scores
-    print("\n🧮 Calculating Antigravity Scores...")
-    scores = calculate_antigravity_score(raw_data)
-    
-    print(f"   🌊 Trend Score:     {scores['trend_score']:+}")
-    print(f"   🚀 Momentum Score:  {scores['momentum_score']:+}")
-    print(f"   ⚠️ Volatility Score: {scores['volatility_score']:+}")
-    print(f"   💎 TOTAL SCORE:      {scores['total_score']} ({scores['signal']} {scores['strength']})")
+    def run(self):
+        print("="*60)
+        print("🚀 Antigravity Engine v2.1 (Class-Based)")
+        print(f"📅 {datetime.now(Config.JST).strftime('%Y-%m-%d %H:%M JST')}")
+        print("="*60)
 
-    # 3. LLM Confirmation
-    print("\n🧠 Gemini AI Final Check...")
-    prompt = create_antigravity_prompt(scores, raw_data)
-    response = call_gemini(prompt, api_key)
-    prediction = parse_ai_response(response, scores['signal'])
-    
-    print(f"   🤖 AI Verdict: {prediction['direction']} (Approved: {prediction['approved']})")
-    print(f"   📝 Reason: {prediction['reasoning']}")
+        # 1. Fetch Data
+        print("📥 Fetching Market Data...")
+        data = self.market.fetch_all()
+        nikkei = data.get("nikkei_futures_daily")
+        
+        if nikkei is None or nikkei.empty:
+            print("❌ Critical Error: No Data")
+            sys.exit(1)
 
-    # 4. ATR Calculation for Risk Management
-    nikkei_d = raw_data.get("nikkei_futures_daily")
-    atr_val = 400.0 # Default
-    if nikkei_d is not None and not nikkei_d.empty:
-        atr_series = calc_atr(nikkei_d)
-        val = atr_series.iloc[-1]
-        if not math.isnan(val):
-            atr_val = val
-    
-    print(f"   📏 ATR (14): {atr_val:.0f}")
+        # 2. Analyze
+        print("\n🧮 Calculating Scores...")
+        engine = AntigravityEngine(data)
+        scores = engine.analyze()
+        
+        print(f"   🌊 Trend:   {scores['trend']:+}")
+        print(f"   🚀 Momentum:{scores['momentum']:+}")
+        print(f"   ⚠️ Volatility:{scores['volatility']:+}")
+        print(f"   💎 TOTAL:    {scores['total']} ({scores['signal']})")
+        
+        # 3. AI Concurrence
+        print("\n🧠 AI Confirmation...")
+        prediction = self.advisor.consult(scores, data)
+        print(f"   🤖 Verdict: {prediction['direction']} ({prediction['reasoning']})")
+        
+        # 4. Get Current Metrics (ATR, Price)
+        atr_series = TechnicalAnalysis.calc_atr(nikkei)
+        current_atr = atr_series.iloc[-1]
+        
+        last_row = nikkei.iloc[-1]
+        current_price = last_row['Close']
+        today_high = last_row['High']
+        today_low = last_row['Low']
+        
+        print(f"   📏 ATR: {current_atr:.0f}")
 
-    # 5. Save & Update
-    data = load_predictions()
-    
-    # Record history
-    data["predictions"].append({
-        "timestamp": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
-        "scores": scores,
-        "prediction": prediction,
-        "atr": round(atr_val, 2)
-    })
-    
-    data = update_shadow_portfolio(data, prediction, raw_data, atr_val)
-    save_predictions(data)
-    
-    # Stats
-    p = data["shadow_portfolio"]
-    print(f"\n💰 Capital: ¥{p['capital']:,.0f}")
-    if p["position"]:
-        print(f"📍 Position: {p['position']['direction']} @ {p['position']['entry_price']:.0f}")
-    
-    print("✅ Done.")
+        # 5. Execute Portfolio Updates
+        # Step A: Close last session's position
+        self.portfolio.update_session(current_price, today_low, today_high, current_atr)
+        
+        # Step B: Record Prediction
+        self.portfolio.log_prediction(scores, prediction, current_atr)
+        
+        # Step C: Open new position (if any)
+        if prediction['approved']:
+            self.portfolio.open_position(prediction, current_price, current_atr)
+        
+        # 6. Save State
+        self.portfolio.save()
+        
+        # Report
+        pf = self.portfolio.data["shadow_portfolio"]
+        print(f"\n💰 Capital: ¥{pf['capital']:,.0f}")
+        if pf['position']:
+            print(f"📍 New Position: {pf['position']['direction']} @ {pf['position']['entry_price']}")
+        else:
+            print("💤 No Position Taken")
+            
+        print("✅ Done.")
 
 if __name__ == "__main__":
-    main()
+    bot = NikkeiBot()
+    bot.run()

@@ -8,12 +8,47 @@ import os
 from datetime import datetime
 import html as html_lib
 
-DATA_FILE = "data/predictions.json"
-OUTPUT_FILE = "data/dashboard.html"
+
+# --- Configuration ---
+
+class DashboardConfig:
+    OUTPUT_FILE = "data/dashboard.html"
+    DATA_FILE = "data/predictions.json"
+    
+    CSS = """
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #eee; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 30px; font-size: 2em; background: linear-gradient(90deg, #00d4ff, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+        .stat-card h3 { font-size: 0.9em; color: #888; margin-bottom: 10px; }
+        .stat-card .value { font-size: 2em; font-weight: bold; }
+        .profit { color: #00d4ff; }
+        .loss { color: #ff6b6b; }
+        .neutral { color: #888; }
+        .chart-container { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 20px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
+        table { width: 100%; border-collapse: collapse; background: rgba(255,255,255,0.05); border-radius: 15px; overflow: hidden; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        th { background: rgba(0,0,0,0.3); font-weight: 600; }
+        .signal { padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 0.85em; }
+        .signal.long { background: rgba(0, 212, 255, 0.2); color: #00d4ff; }
+        .signal.short { background: rgba(255, 107, 107, 0.2); color: #ff6b6b; }
+        .signal.wait { background: rgba(136, 136, 136, 0.2); color: #888; }
+        .position-card { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
+        .position-card.long { border-color: rgba(0, 212, 255, 0.5); }
+        .position-card.short { border-color: rgba(255, 107, 107, 0.5); }
+        .section-title { margin: 30px 0 20px; font-size: 1.3em; }
+        .updated { text-align: center; color: #666; margin-top: 30px; font-size: 0.9em; }
+        .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.8em; width: 160px; }
+        .score-item { color: #aaa; }
+        .score-total { grid-column: span 2; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 5px; padding-top: 2px; text-align: center; }
+        .reason-cell { font-size: 0.85em; color: #ccc; max-width: 400px; line-height: 1.4; }
+    """
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+    if os.path.exists(DashboardConfig.DATA_FILE):
+        with open(DashboardConfig.DATA_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     return {"predictions": [], "shadow_portfolio": {"capital": 100000, "position": None, "trades": []}}
 
@@ -136,142 +171,7 @@ def generate_html(data):
     <title>Nikkei 225 Trading Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #eee;
-            min-height: 100vh;
-            padding: 20px;
-        }}
-        .container {{
-            max-width: 1400px;
-            margin: 0 auto;
-        }}
-        h1 {{
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 2em;
-            background: linear-gradient(90deg, #00d4ff, #7c3aed);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
-        .stats-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-        .stat-card {{
-            background: rgba(255,255,255,0.05);
-            border-radius: 15px;
-            padding: 25px;
-            text-align: center;
-            border: 1px solid rgba(255,255,255,0.1);
-        }}
-        .stat-card h3 {{
-            font-size: 0.9em;
-            color: #888;
-            margin-bottom: 10px;
-        }}
-        .stat-card .value {{
-            font-size: 2em;
-            font-weight: bold;
-        }}
-        .profit {{ color: #00d4ff; }}
-        .loss {{ color: #ff6b6b; }}
-        .neutral {{ color: #888; }}
-        .chart-container {{
-            background: rgba(255,255,255,0.05);
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 30px;
-            border: 1px solid rgba(255,255,255,0.1);
-        }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            background: rgba(255,255,255,0.05);
-            border-radius: 15px;
-            overflow: hidden;
-        }}
-        th, td {{
-            padding: 15px;
-            text-align: left;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }}
-        th {{
-            background: rgba(0,0,0,0.3);
-            font-weight: 600;
-        }}
-        .signal {{
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 0.85em;
-        }}
-        .signal.long {{
-            background: rgba(0, 212, 255, 0.2);
-            color: #00d4ff;
-        }}
-        .signal.short {{
-            background: rgba(255, 107, 107, 0.2);
-            color: #ff6b6b;
-        }}
-        .signal.wait {{
-            background: rgba(136, 136, 136, 0.2);
-            color: #888;
-        }}
-        .position-card {{
-            background: rgba(255,255,255,0.05);
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 30px;
-            border: 1px solid rgba(255,255,255,0.1);
-        }}
-        .position-card.long {{
-            border-color: rgba(0, 212, 255, 0.5);
-        }}
-        .position-card.short {{
-            border-color: rgba(255, 107, 107, 0.5);
-        }}
-        .section-title {{
-            margin: 30px 0 20px;
-            font-size: 1.3em;
-        }}
-        .updated {{
-            text-align: center;
-            color: #666;
-            margin-top: 30px;
-            font-size: 0.9em;
-        }}
-        .score-grid {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 5px;
-            font-size: 0.8em;
-            width: 160px;
-        }}
-        .score-item {{
-            color: #aaa;
-        }}
-        .score-total {{
-            grid-column: span 2;
-            border-top: 1px solid rgba(255,255,255,0.1);
-            margin-top: 5px;
-            padding-top: 2px;
-            text-align: center;
-        }}
-        .reason-cell {{
-            font-size: 0.85em;
-            color: #ccc;
-            max-width: 400px;
-            line-height: 1.4;
-        }}
+        {DashboardConfig.CSS}
     </style>
 </head>
 <body>
@@ -394,11 +294,11 @@ def main():
     data = load_data()
     dashboard_content = generate_html(data)
     
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+    os.makedirs(os.path.dirname(DashboardConfig.OUTPUT_FILE), exist_ok=True)
+    with open(DashboardConfig.OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(dashboard_content)
     
-    print(f"✅ Dashboard generated: {OUTPUT_FILE}")
+    print(f"✅ Dashboard generated: {DashboardConfig.OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
