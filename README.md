@@ -43,10 +43,10 @@
 
 ## 3. インフラストラクチャ (Infrastructure)
 
-本プロジェクトは **「サーバーレス」** を実現しており、GitHub Actions上で運用されています。
+本プロジェクトは **「フェーズ1：サーバーレス」** と **「フェーズ2：Windows VPS」** の2段階構成です。
 
-### ⚙️ GitHub Actions (Automation)
-システムはクラウド上で完全自動運用されています。
+### ⚙️ Phase 1: GitHub Actions (Current)
+現在はコストゼロで検証を行うため、GitHub Actions上で運用されています。
 
 1.  **Daily Prediction (`src/nikkei_bot.py`)**:
     *   毎日 **08:00 JST** と **16:00 JST** に定期実行。
@@ -54,9 +54,20 @@
     
 2.  **Dashboard Generation**:
     *   取引結果をWebダッシュボード (`dashboard.html`) に即時反映。
+    *   [View Dashboard](https://trtkservice.github.io/for225/data/dashboard.html)
 
-### 📊 Dashboard
-[View Dashboard](https://trtkservice.github.io/for225/data/dashboard.html)
+### 🏢 Phase 2: Windows VPS (Future / Go-Live)
+本番運用（リアルマネー投入）時は、安定性と証券会社のツール制約のため、以下の構成へ移行します。
+
+*   **証券会社**: 楽天証券 (MarketSpeed II RSS利用)
+    *   理由: 国内大手で信頼性が高く、Excel/Python連携APIが提供されているため。
+*   **サーバー**: **Windows VPS (メモリ2GB以上)**
+    *   推奨: ConoHa for Windows, さくらのVPS等 (月額目安: ¥1,500〜)
+    *   理由: 楽天RSSはWindows専用アプリであり、またMacBook常時稼働を避けるため。
+*   **移行手順**:
+    1.  Windows VPSを契約。
+    2.  MacからMicrosoft Remote Desktopで接続。
+    3.  楽天RSSと`nikkei_bot.py`を設置し、タスクスケジューラで定期実行。
 
 ---
 
@@ -72,20 +83,6 @@
 ---
 
 ## 5. 開発者向け情報 (Development)
-
-### ディレクトリ構成
-```
-.
-├── src/
-│   ├── nikkei_bot.py        # メインロジック (A/B System)
-│   ├── generate_dashboard.py # ダッシュボード生成
-│   └── __init__.py          # パッケージ定義
-├── data/
-│   ├── predictions.json     # 取引データDB (JSON)
-│   └── dashboard.html       # 生成されたWeb UI
-├── backtest_runner.py       # バックテスト実行用スクリプト
-└── .github/workflows/       # 自動実行定義
-```
 
 ### ローカル実行方法
 ```bash
