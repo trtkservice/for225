@@ -96,9 +96,15 @@ def run_backtest():
     print(f"📥 Fetching 3 years of data (Start: {START_DATE})...")
     
     # Fetch Data
-    nikkei = yf.download("^N225", start=START_DATE, progress=False) # Use Index for long history reliability
+    nikkei = yf.download("^N225", start=START_DATE, progress=False) 
     vix = yf.download("^VIX", start=START_DATE, progress=False)
     
+    # Flatten MultiIndex columns if present (Fix for recent yfinance)
+    if isinstance(nikkei.columns, pd.MultiIndex):
+        nikkei.columns = nikkei.columns.get_level_values(0)
+    if isinstance(vix.columns, pd.MultiIndex):
+        vix.columns = vix.columns.get_level_values(0)
+        
     # Preprocess
     nikkei = calc_indicators(nikkei)
     
@@ -112,21 +118,38 @@ def run_backtest():
     print("RUNNING SIMULATION...")
     
     for i in range(200, len(nikkei)-1):
-        today = nikkei.iloc[i]
-        tomorrow = nikkei.iloc[i+1] # Trading Day
-        vix_val = vix.iloc[i]
+        # Extract scalar values explicitly to avoid Series comparison error
+        today_row = nikkei.iloc[i]
+        today_close = float(today_row['Close'])
+        today_ema20 = float(today_row['EMA20'])
+        today_ema50 = float(today_row['EMA50'])
+        today_ema200 = float(today_row['EMA200'])
+        
+        # Pass dictionary with scalars instead of Series
+        idx_data = {
+            'Close': today_close,
+            'EMA20': today_ema20,
+            'EMA50': today_ema50,
+            'EMA200': today_ema200,
+            'RSI': float(today_row['RSI']),
+            'MACD_Hist': float(today_row['MACD_Hist']),
+            'ATR': float(today_row['ATR']) if not pd.isna(today_row['ATR']) else 400.0
+        }
+        
+        vix_val = float(vix.iloc[i])
         
         # 1. Signal
-        signal = get_signal(today, vix_val)
+        signal = get_signal(idx_data, vix_val)
+        
         if signal == "WAIT":
             equity_curve.append(capital)
             continue
-            
+
         # 2. Setup Trade
-        atr = today['ATR']
-        if np.isnan(atr): atr = 400
+        tomorrow = nikkei.iloc[i+1] # Trading Day remains DataFrame row
+        atr = idx_data['ATR'] # Usescalar from dict
         
-        entry_price = round_to_tick(tomorrow['Open']) # Enter at Open
+        entry_price = round_to_tick(float(tomorrow['Open'])) # Enter at Open
         stop_dist = round_to_tick(atr * STOP_ATR_MULT)
         target_dist = round_to_tick(atr * TARGET_ATR_MULT)
         
