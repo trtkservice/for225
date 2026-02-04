@@ -1,8 +1,7 @@
 {
   "predictions": [],
-  "shadow_portfolio": {
-    "capital": 100000,
-    "position": null,
-    "trades": []
+  "portfolios": {
+    "optimized": { "capital": 100000, "position": null, "trades": [] },
+    "raptor": { "capital": 100000, "position": null, "trades": [] }
   }
 }

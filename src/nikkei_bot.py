@@ -30,9 +30,21 @@ class Config:
     
     # Strategy Parameters
     SHADOW_CAPITAL = 100000
-    RISK_STOP_ATR_MULT = 0.6  # Optimized Parameter
-    RISK_TARGET_ATR_MULT = 1.2 # Optimized Parameter
-    MAX_HOLD_DAYS = 5         # Swing Trade Time Limit
+    MAX_HOLD_DAYS = 5
+    
+    # Strategy Definitions (A/B Testing)
+    STRATEGIES = {
+        "optimized": {
+            "name": "Antigravity (Normal)",
+            "stop_mult": 0.6,
+            "target_mult": 1.2
+        },
+        "raptor": {
+            "name": "Raptor (Wide)",
+            "stop_mult": 1.2,
+            "target_mult": 2.4
+        }
+    }
     
     # Antigravity Weights
     WEIGHT_TREND = 0.4
@@ -267,17 +279,39 @@ class GeminiAdvisor:
         return default
 
 class PortfolioManager:
-    """Manages Shadow Portfolio (JSON Database)."""
+    """Manages Multiple Shadow Portfolios (A/B Testing)."""
     
     def __init__(self):
         self.file = Config.DATA_FILE
         self.data = self._load()
 
     def _load(self):
+        default_pf = {
+            "capital": Config.SHADOW_CAPITAL,
+            "position": None, 
+            "trades": []
+        }
+        
         if os.path.exists(self.file):
-            with open(self.file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return {"predictions": [], "shadow_portfolio": {"capital": Config.SHADOW_CAPITAL, "position": None, "trades": []}}
+            try:
+                with open(self.file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Migration: If old structure, convert to new structure
+                    if "portfolios" not in data:
+                        data["portfolios"] = {
+                            key: default_pf.copy() for key in Config.STRATEGIES.keys()
+                        }
+                    return data
+            except:
+                pass
+                
+        # Fresh Start
+        return {
+            "predictions": [],
+            "portfolios": {
+                key: default_pf.copy() for key in Config.STRATEGIES.keys()
+            }
+        }
 
     def save(self):
         os.makedirs(os.path.dirname(self.file), exist_ok=True)
@@ -285,104 +319,106 @@ class PortfolioManager:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def update_session(self, current_price_raw: float, low: float, high: float, atr: float):
-        """
-        Check existing position for Stop/Target or Time Expiration.
-        If active, hold overnight (do not close).
-        """
-        pf = self.data["shadow_portfolio"]
-        if not pf.get("position"):
-            return # Nothing to manage
+        """Update ALL portfolios based on their active positions."""
+        
+        for strat_key, strat_conf in Config.STRATEGIES.items():
+            pf = self.data["portfolios"][strat_key]
+            
+            if not pf.get("position"):
+                continue
 
-        pos = pf["position"]
-        direction = pos["direction"]
-        entry = pos["entry_price"]
-        stop = pos["stop"]
-        target = pos["target"]
-        
-        # 1. Check Price Events (Stop/Target)
-        hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
-        hit_target = (high >= target) if direction == "LONG" else (low <= target)
-        
-        # 2. Check Time Expiration
-        try:
-            entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d %H:%M").replace(tzinfo=Config.JST)
-            now_dt = datetime.now(Config.JST)
-            days_held = (now_dt - entry_dt).days
-        except:
-            days_held = 99 # Fallback if parsing fails
+            pos = pf["position"]
+            direction = pos["direction"]
+            entry = pos["entry_price"]
+            stop = pos["stop"]
+            target = pos["target"]
             
-        time_stop = days_held >= Config.MAX_HOLD_DAYS
-        
-        # 3. Determine Outcome
-        exit_price = None
-        reason = None
-        
-        if hit_stop:
-            exit_price = stop # Conservative fill
-            reason = "STOP"
-            if hit_target: pass # Assume stop hit if both touched (Conservative)
-        elif hit_target:
-            exit_price = target
-            reason = "TARGET"
-        elif time_stop:
-            exit_price = round_to_tick(current_price_raw)
-            reason = "TIME_STOP"
+            # Checks
+            hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
+            hit_target = (high >= target) if direction == "LONG" else (low <= target)
             
-        # 4. Execute Close (if condition met)
-        if exit_price is not None:
-            # PnL Calc
-            p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-            gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
-            net_pnl = gross_pnl - Config.COST_PER_TRADE
+            # Time Expiration
+            try:
+                entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d %H:%M").replace(tzinfo=Config.JST)
+                now_dt = datetime.now(Config.JST)
+                days_held = (now_dt - entry_dt).days
+            except:
+                days_held = 99
+                
+            time_stop = days_held >= Config.MAX_HOLD_DAYS
             
-            pf["capital"] += net_pnl
-            pf["trades"].append({
-                "entry_date": pos["entry_date"],
-                "exit_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
-                "direction": direction,
-                "entry_price": int(entry),
-                "exit_price": int(exit_price),
-                "pnl_points": int(p_diff),
-                "pnl_yen": int(net_pnl),
-                "close_reason": reason,
-                "days_held": days_held
-            })
-            pf["position"] = None
-            print(f"🛑 Closed Position: {reason} PnL: {net_pnl:+}")
-        else:
-            print(f"🛌 Overnight Hold: {direction} (Day {days_held}) Px: {current_price_raw:.0f}")
-
-        self.data["shadow_portfolio"] = pf
+            # Outcome
+            exit_price = None
+            reason = None
+            
+            if hit_stop:
+                exit_price = stop
+                reason = "STOP"
+                if hit_target: pass
+            elif hit_target:
+                exit_price = target
+                reason = "TARGET"
+            elif time_stop:
+                exit_price = round_to_tick(current_price_raw)
+                reason = "TIME_STOP"
+                
+            if exit_price is not None:
+                p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
+                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
+                net_pnl = gross_pnl - Config.COST_PER_TRADE
+                
+                pf["capital"] += net_pnl
+                pf["trades"].append({
+                    "entry_date": pos["entry_date"],
+                    "exit_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
+                    "direction": direction,
+                    "entry_price": int(entry),
+                    "exit_price": int(exit_price),
+                    "pnl_points": int(p_diff),
+                    "pnl_yen": int(net_pnl),
+                    "close_reason": reason,
+                    "days_held": days_held
+                })
+                pf["position"] = None
+                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+}")
+            else:
+                print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held}")
+            
+            self.data["portfolios"][strat_key] = pf
 
     def open_position(self, prediction, current_price_raw, atr_val):
-        """Open a new position if signal exists and NO position is currently open."""
+        """Try to open position for ALL portfolios if not already holding."""
         signal = prediction["direction"]
-        
-        pf = self.data["shadow_portfolio"]
-        if pf.get("position"):
-            # Already holding a position (Swing Trade)
-            return 
-            
         if signal not in ["LONG", "SHORT"]: return
-
+        
         entry_price = round_to_tick(current_price_raw)
         safe_atr = atr_val if not pd.isna(atr_val) else 400.0
         
-        # Risk Management (Optimized Ratios)
-        stop_dist = round_to_tick(safe_atr * Config.RISK_STOP_ATR_MULT)
-        target_dist = round_to_tick(safe_atr * Config.RISK_TARGET_ATR_MULT)
-        
-        stop_price = entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist
-        target_price = entry_price + target_dist if signal == "LONG" else entry_price - target_dist
-        
-        pf["position"] = {
-            "direction": signal,
-            "entry_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
-            "entry_price": int(entry_price),
-            "stop": int(stop_price),
-            "target": int(target_price),
-        }
-        self.data["shadow_portfolio"] = pf
+        for strat_key, strat_conf in Config.STRATEGIES.items():
+            pf = self.data["portfolios"][strat_key]
+            
+            if pf.get("position"):
+                continue # Already holding in this strategy
+
+            stop_mult = strat_conf["stop_mult"]
+            target_mult = strat_conf["target_mult"]
+            
+            stop_dist = round_to_tick(safe_atr * stop_mult)
+            target_dist = round_to_tick(safe_atr * target_mult)
+            
+            stop_price = entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist
+            target_price = entry_price + target_dist if signal == "LONG" else entry_price - target_dist
+            
+            pf["position"] = {
+                "direction": signal,
+                "entry_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
+                "entry_price": int(entry_price),
+                "stop": int(stop_price),
+                "target": int(target_price),
+                "strategy": strat_key
+            }
+            self.data["portfolios"][strat_key] = pf
+            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Stop:{stop_price} Target:{target_price})")
 
     def log_prediction(self, scores, prediction, atr):
         # Allow JSON serialization of scores (convert numpy types)
@@ -418,7 +454,7 @@ class NikkeiBot:
         # ------------------------------------------------------------
 
         print("="*60)
-        print("🚀 Antigravity Engine v2.1 (Class-Based)")
+        print("🚀 Antigravity Engine v2.1 (A/B Testing Mode)")
         print(f"📅 {datetime.now(Config.JST).strftime('%Y-%m-%d %H:%M JST')}")
         print("="*60)
 
@@ -446,7 +482,7 @@ class NikkeiBot:
         prediction = self.advisor.consult(scores, data)
         print(f"   🤖 Verdict: {prediction['direction']} ({prediction['reasoning']})")
         
-        # 4. Get Current Metrics (ATR, Price)
+        # 4. Get Current Metrics
         atr_series = TechnicalAnalysis.calc_atr(nikkei)
         current_atr = atr_series.iloc[-1]
         
@@ -458,26 +494,39 @@ class NikkeiBot:
         print(f"   📏 ATR: {current_atr:.0f}")
 
         # 5. Execute Portfolio Updates
-        # Step A: Close last session's position
         self.portfolio.update_session(current_price, today_low, today_high, current_atr)
         
-        # Step B: Record Prediction
+        # 6. Record Prediction
         self.portfolio.log_prediction(scores, prediction, current_atr)
         
-        # Step C: Open new position (if any)
+        # 7. Open New Positions (A/B Test)
         if prediction['approved']:
             self.portfolio.open_position(prediction, current_price, current_atr)
         
-        # 6. Save State
+        # 8. Save State
         self.portfolio.save()
         
-        # Report
-        pf = self.portfolio.data["shadow_portfolio"]
-        print(f"\n💰 Capital: ¥{pf['capital']:,.0f}")
-        if pf['position']:
-            print(f"📍 New Position: {pf['position']['direction']} @ {pf['position']['entry_price']}")
-        else:
-            print("💤 No Position Taken")
+        # 9. Report Stats (A/B)
+        print("\n📈 Strategy Performance:")
+        portfolios = self.portfolio.data["portfolios"]
+        
+        for key, conf in Config.STRATEGIES.items():
+            pf = portfolios[key]
+            trades = pf["trades"]
+            capital = pf["capital"]
+            
+            wins = len([t for t in trades if t['pnl_yen'] > 0])
+            total_trades = len(trades)
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
+            total_pnl = sum(t['pnl_yen'] for t in trades)
+            
+            pos_str = f"{pf['position']['direction']}@{pf['position']['entry_price']}" if pf['position'] else "FLAT"
+            
+            print(f" [{conf['name']}]")
+            print(f"   💰 Cap: ¥{capital:,.0f} ({total_pnl:+})")
+            print(f"   📊 Win: {win_rate:.1f}% ({wins}/{total_trades})")
+            print(f"   📍 Pos: {pos_str}")
+            print("-" * 30)
             
         print("✅ Done.")
 
