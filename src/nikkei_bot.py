@@ -6,10 +6,13 @@ Nikkei 225 Trading Bot - Antigravity Engine (Advanced Technical Analysis)
 import os
 import json
 import sys
+import math
 from datetime import datetime, timedelta
 import pytz
 import pandas as pd
 import numpy as np
+import yfinance as yf
+import google.generativeai as genai
 
 # Constants
 JST = pytz.timezone('Asia/Tokyo')
@@ -31,6 +34,10 @@ TICKERS = {
     "usdjpy": "JPY=X",
     "us10y": "^TNX",
 }
+
+def round_to_tick(price):
+    """Round price to the nearest tick size."""
+    return round(price / TICK_SIZE) * TICK_SIZE
 
 def fetch_data():
     """Fetch both Daily and Intraday data."""
@@ -121,6 +128,9 @@ def calculate_antigravity_score(data):
     # --- Layer 1: Trend (DEEP) ---
     # EMA Analysis
     close = nikkei_daily['Close']
+    if len(close) < 200:
+        return scores # Not enough data
+        
     ema20 = close.ewm(span=20, adjust=False).mean().iloc[-1]
     ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
     ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1]
@@ -143,12 +153,12 @@ def calculate_antigravity_score(data):
 
     # --- Layer 2: Momentum (FAST) ---
     mom_val = 0
-    if nikkei_15m is not None and not nikkei_15m.empty:
+    if nikkei_15m is not None and not nikkei_15m.empty and len(nikkei_15m) > 30:
         close_15m = nikkei_15m['Close']
         
         # RSI (14)
         rsi = calc_rsi(close_15m).iloc[-1]
-        scores["details"]["rsi_15m"] = round(rsi, 1)
+        scores["details"]["rsi_15m"] = round(rsi, 1) if not np.isnan(rsi) else 50.0
         
         if rsi > 70:
             mom_val -= 0.3  # Overbought, risk of pullback
@@ -177,7 +187,7 @@ def calculate_antigravity_score(data):
 
     # --- Layer 3: Risk / Volatility ---
     vol_val = 0
-    if not vix_daily.empty:
+    if vix_daily is not None and not vix_daily.empty:
         vix = vix_daily['Close'].iloc[-1]
         scores["details"]["vix"] = round(vix, 2)
         
@@ -185,6 +195,8 @@ def calculate_antigravity_score(data):
         elif vix < 20: vol_val += 0.0
         elif vix > 30: vol_val -= 0.8   # Extreme Panic
         elif vix > 20: vol_val -= 0.3   # Caution
+    else:
+        scores["details"]["vix"] = 20.0 # Default neutral
         
     scores["volatility_score"] = round(vol_val, 3)
     
@@ -292,7 +304,7 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
     high = last_row['High']
     low = last_row['Low']
     
-    entry_price = price # Use close as "current" for simulation entry
+    entry_price = round_to_tick(price) # Use close as "current" for simulation entry
 
     # Manage Open Position (Force Close at session end)
     if portfolio.get("position"):
@@ -314,7 +326,7 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
             
         closed = True  # ALWAYS close at the end of session (Day/Night separation)
         reason = "CLOSE_SESSION" # Default reason
-        exit_p = price # Default exit at close price
+        exit_p = entry_price # Default exit at session close price
         
         if hit_stop:
             reason = "STOP"; exit_p = stop
@@ -344,8 +356,11 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
 
     # Open New Position
     if prediction["direction"] in ["LONG", "SHORT"] and not portfolio.get("position"):
-        stop_dist = int(atr_val * 0.5)
-        target_dist = int(atr_val * 1.0)
+        # Safer ATR handling
+        safe_atr = atr_val if not math.isnan(atr_val) else 400.0
+        
+        stop_dist = round_to_tick(safe_atr * 0.5)
+        target_dist = round_to_tick(safe_atr * 1.0)
         
         stop_price = entry_price - stop_dist if prediction["direction"] == "LONG" else entry_price + stop_dist
         target_price = entry_price + target_dist if prediction["direction"] == "LONG" else entry_price - target_dist
@@ -384,7 +399,7 @@ def main():
     print(f"   🌊 Trend Score:     {scores['trend_score']:+}")
     print(f"   🚀 Momentum Score:  {scores['momentum_score']:+}")
     print(f"   ⚠️ Volatility Score: {scores['volatility_score']:+}")
-    print(f"   💎 TOTAL SCORE:      {scores['total_score']:+} ({scores['signal']} {scores['strength']})")
+    print(f"   💎 TOTAL SCORE:      {scores['total_score']} ({scores['signal']} {scores['strength']})")
 
     # 3. LLM Confirmation
     print("\n🧠 Gemini AI Final Check...")
@@ -397,10 +412,12 @@ def main():
 
     # 4. ATR Calculation for Risk Management
     nikkei_d = raw_data.get("nikkei_futures_daily")
-    atr_val = 400
+    atr_val = 400.0 # Default
     if nikkei_d is not None and not nikkei_d.empty:
         atr_series = calc_atr(nikkei_d)
-        atr_val = atr_series.iloc[-1]
+        val = atr_series.iloc[-1]
+        if not math.isnan(val):
+            atr_val = val
     
     print(f"   📏 ATR (14): {atr_val:.0f}")
 
