@@ -282,18 +282,6 @@ class PortfolioManager:
     """Manages Multiple Shadow Portfolios (A/B Testing)."""
     
     def __init__(self):
-        self.file = Config.DATA_FILE
-        self.data = self._load()
-
-    def _load(self):
-        default_pf = {
-            "capital": Config.SHADOW_CAPITAL,
-            "position": None, 
-            "trades": []
-        }
-        
-        if os.path.exists(self.file):
-            try:
         self.file_path = Config.DATA_FILE
         self.data = self._load_data()
 
