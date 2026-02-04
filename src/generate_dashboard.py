@@ -6,7 +6,7 @@ Generate HTML Dashboard from predictions.json
 import json
 import os
 from datetime import datetime
-import html
+import html as html_lib
 
 DATA_FILE = "data/predictions.json"
 OUTPUT_FILE = "data/dashboard.html"
@@ -65,7 +65,7 @@ def generate_html(data):
             rule = p.get("rule_check", {})
             score_html = f"Old Rule: {rule.get('strength', '-')}"
 
-        reasoning = html.escape(pred.get('reasoning', 'N/A'))
+        reasoning = html_lib.escape(pred.get('reasoning', 'N/A'))
         pred_rows += f"""
         <tr>
             <td>{ts}</td>
@@ -128,7 +128,7 @@ def generate_html(data):
         </div>
         """
     
-    html = f"""<!DOCTYPE html>
+    dashboard_html = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
@@ -388,15 +388,15 @@ def generate_html(data):
 </body>
 </html>
 """
-    return html
+    return dashboard_html
 
 def main():
     data = load_data()
-    html = generate_html(data)
+    dashboard_content = generate_html(data)
     
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write(html)
+        f.write(dashboard_content)
     
     print(f"✅ Dashboard generated: {OUTPUT_FILE}")
 
