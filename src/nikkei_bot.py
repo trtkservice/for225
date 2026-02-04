@@ -58,8 +58,7 @@ class Config:
     TICKERS = {
         "nikkei_futures": "NKD=F",
         "nikkei_index": "^N225",
-        "vix": "^VIX",
-        "nikkei_vi": "^JNIV"
+        "vix": "^VIX"
     }
 
 # --- Helper Functions ---
@@ -125,6 +124,41 @@ class TechnicalAnalysis:
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = ranges.max(axis=1)
         return true_range.rolling(window=period).mean()
+
+    @staticmethod
+    def calc_hv(series, period=20):
+        """Calculate Historical Volatility (Annualized)."""
+        log_returns = np.log(series / series.shift(1))
+        # Annualize volatility (assuming 252 trading days)
+        return log_returns.rolling(window=period).std() * np.sqrt(252) * 100
+
+    @staticmethod
+    def calc_adx(df, period=14):
+        """Calculate ADX (Average Directional Index)."""
+        high = df['High']
+        low = df['Low']
+        close = df['Close']
+        
+        plus_dm = high.diff()
+        minus_dm = low.diff() * -1
+        plus_dm[plus_dm < 0] = 0
+        minus_dm[minus_dm < 0] = 0
+        
+        tr1 = high - low
+        tr2 = (high - close.shift()).abs()
+        tr3 = (low - close.shift()).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(period).mean()
+        
+        plus_di = 100 * (plus_dm.ewm(alpha=1/period).mean() / atr)
+        minus_di = 100 * (minus_dm.ewm(alpha=1/period).mean() / atr)
+        
+        # Check for division by zero
+        sum_di = plus_di + minus_di
+        dx = 100 * abs(plus_di - minus_di) / sum_di.replace(0, 1)
+        
+        adx = dx.ewm(alpha=1/period).mean()
+        return adx
 
 class AntigravityEngine:
     """

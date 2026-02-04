@@ -48,7 +48,7 @@ class BacktestEngine(AntigravityEngine):
             
         self.scores["momentum"] = round(np.clip(val, -1.0, 1.0), 3)
 
-def run_simulation(nikkei, vix, jniv, stop_mult, target_mult, mode="SWING"):
+def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
     """
     mode: "SWING" (Overnight) or "DAY" (Exit at Close)
     """
@@ -125,12 +125,11 @@ def run_simulation(nikkei, vix, jniv, stop_mult, target_mult, mode="SWING"):
         if start_idx < 0: start_idx = 0
         window = pd.DataFrame(daily_records[start_idx : i+1])
         vix_window = pd.DataFrame(vix.iloc[start_idx : i+1])
-        jniv_window = pd.DataFrame(jniv.iloc[start_idx : i+1])
         
         engine = BacktestEngine({
             "nikkei_futures_daily": window,
-            "vix_daily": vix_window,
-            "nikkei_vi_daily": jniv_window
+            "nikkei_index_daily": window, # Use futures data as proxy for index for HV calc
+            "vix_daily": vix_window
         })
         scores = engine.analyze()
         signal = scores['signal']
@@ -168,16 +167,13 @@ def run_grid_search():
     print(f"📥 Fetching Data...")
     nikkei = yf.download(Config.TICKERS["nikkei_index"], start=START_DATE, progress=False)
     vix = yf.download(Config.TICKERS["vix"], start=START_DATE, progress=False)
-    jniv = yf.download(Config.TICKERS["nikkei_vi"], start=START_DATE, progress=False)
     
     if isinstance(nikkei.columns, pd.MultiIndex): nikkei.columns = nikkei.columns.get_level_values(0)
     if isinstance(vix.columns, pd.MultiIndex): vix.columns = vix.columns.get_level_values(0)
-    if isinstance(jniv.columns, pd.MultiIndex): jniv.columns = jniv.columns.get_level_values(0)
 
     # Pre-calc ATR
     nikkei['ATR'] = TechnicalAnalysis.calc_atr(nikkei)
     vix = vix['Close'].reindex(nikkei.index).fillna(20.0).to_frame(name='Close')
-    jniv = jniv['Close'].reindex(nikkei.index).fillna(20.0).to_frame(name='Close')
 
     print(f"🔎 Comparative Search: SWING vs DAY TRADE (RiskGate: {Config.GAP_THRESHOLD*100:.1f}% - DISABLED)")
     print("="*90)
@@ -188,12 +184,12 @@ def run_grid_search():
         if t <= s: continue 
         
         # Run SWING
-        cap_s, trds_s = run_simulation(nikkei, vix, jniv, s, t, mode="SWING")
+        cap_s, trds_s = run_simulation(nikkei, vix, s, t, mode="SWING")
         ret_s = (cap_s - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         win_s = (len([x for x in trds_s if x > 0])/len(trds_s)*100) if trds_s else 0
         
         # Run DAY
-        cap_d, trds_d = run_simulation(nikkei, vix, jniv, s, t, mode="DAY")
+        cap_d, trds_d = run_simulation(nikkei, vix, s, t, mode="DAY")
         ret_d = (cap_d - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         win_d = (len([x for x in trds_d if x > 0])/len(trds_d)*100) if trds_d else 0
         
