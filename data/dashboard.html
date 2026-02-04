@@ -119,48 +119,71 @@
             margin-top: 30px;
             font-size: 0.9em;
         }
+        .score-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            font-size: 0.8em;
+            width: 160px;
+        }
+        .score-item {
+            color: #aaa;
+        }
+        .score-total {
+            grid-column: span 2;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            margin-top: 5px;
+            padding-top: 2px;
+            text-align: center;
+        }
+        .reason-cell {
+            font-size: 0.85em;
+            color: #ccc;
+            max-width: 400px;
+            line-height: 1.4;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🤖 Nikkei 225 AI Trading Dashboard</h1>
+        <h1>🚀 Antigravity Trading Dashboard</h1>
         
         <div class="stats-grid">
             <div class="stat-card">
                 <h3>💰 Capital</h3>
-                <div class="value">¥98,000</div>
+                <div class="value">¥100,707</div>
             </div>
             <div class="stat-card">
                 <h3>📊 Total P&L</h3>
-                <div class="value loss">¥-2,000</div>
+                <div class="value profit">¥+707</div>
             </div>
             <div class="stat-card">
                 <h3>📈 Return</h3>
-                <div class="value loss">-2.00%</div>
+                <div class="value profit">+0.71%</div>
             </div>
             <div class="stat-card">
                 <h3>🎯 Win Rate</h3>
-                <div class="value">0.0%</div>
+                <div class="value">50.0%</div>
             </div>
             <div class="stat-card">
                 <h3>📝 Total Trades</h3>
-                <div class="value">1</div>
+                <div class="value">2</div>
             </div>
             <div class="stat-card">
                 <h3>🔮 Predictions</h3>
-                <div class="value">7</div>
+                <div class="value">8</div>
             </div>
         </div>
         
         
-        <div class="position-card short">
+        <div class="position-card long">
             <h3>📍 Current Position</h3>
             <div class="position-details">
-                <span class="signal short">SHORT</span>
-                <p>Entry: 54,721</p>
-                <p>Stop: 55,306</p>
-                <p>Target: 53,550</p>
-                <p>Since: 2026-02-04 08:35</p>
+                <span class="signal long">LONG</span>
+                <p>Entry: 54,450</p>
+                <p>Stop: 53,890</p>
+                <p>Target: 55,570</p>
+                <p>Since: 2026-02-04 12:18</p>
             </div>
         </div>
         
@@ -175,7 +198,7 @@
                 <tr>
                     <th>Timestamp</th>
                     <th>Signal</th>
-                    <th>Strength</th>
+                    <th>Scores (Antigravity)</th>
                     <th>Confidence</th>
                     <th>Reasoning</th>
                 </tr>
@@ -183,59 +206,81 @@
             <tbody>
                 
         <tr>
+            <td>2026-02-04 12:18</td>
+            <td><span class="signal long">LONG</span></td>
+            <td>
+            <div class="score-grid">
+                <span class="score-item" title="Trend">T: <b class="profit">+1.00</b></span>
+                <span class="score-item" title="Momentum">M: <b class="profit">+0.30</b></span>
+                <span class="score-item" title="Volatility">V: <b class="loss">+0.00</b></span>
+                <span class="score-total">Total: <b class="profit">+0.52</b></span>
+            </div>
+            </td>
+            <td>HIGH</td>
+            <td class="reason-cell">日足トレンドスコア1.0が絶対的な優位性を持つ。15分足RSI 60.8は健全な買い圧力であり、過熱感がないため、上値余地は十分に残されている。VIX 18.0が示すように、市場は安定したリスクオン状態にあるため、高確度のトレンド追随（Continuation Play）としてエントリーを承認する。</td>
+        </tr>
+        
+        <tr>
             <td>2026-02-04 11:38</td>
             <td><span class="signal long">LONG</span></td>
-            <td>N/A</td>
+            <td>
+            <div class="score-grid">
+                <span class="score-item" title="Trend">T: <b class="profit">+1.00</b></span>
+                <span class="score-item" title="Momentum">M: <b class="profit">+0.30</b></span>
+                <span class="score-item" title="Volatility">V: <b class="loss">+0.00</b></span>
+                <span class="score-total">Total: <b class="profit">+0.52</b></span>
+            </div>
+            </td>
             <td>HIGH</td>
-            <td>Trendレイヤーが最大の1.0であり、市場の基調が強固な強気であることを示している。短期モメンタム...</td>
+            <td class="reason-cell">Trendレイヤーが最大の1.0であり、市場の基調が強固な強気であることを示している。短期モメンタム（RSI 60.5）は過熱感がなく、十分な上昇余地を残している。VIXも安定しており、リスク許容度が高い状態。これは教科書通りの高確率なトレンド継続エントリーであり、即時エントリー（LONG）を承認する。</td>
         </tr>
         
         <tr>
             <td>2026-02-04 11:36</td>
             <td><span class="signal short">SHORT</span></td>
-            <td>STRONG</td>
+            <td>Old Rule: STRONG</td>
             <td>HIGH</td>
-            <td>PythonルールのSHORTシグナルは妥当。米国株は下落（S&P 500: -0.84%）に留まる...</td>
+            <td class="reason-cell">PythonルールのSHORTシグナルは妥当。米国株は下落（S&P 500: -0.84%）に留まるが、VIXが10%超急騰し、市場全体のリスクオフ心理が非常に高まっていることを示す。円安進行にもかかわらず日経平均が売られている点も、強い売り圧力を裏付ける。SHORTポジションを採用し、VIX高騰によるボラティリティ増加を考慮し、ストップポイントを200ポイントとする。</td>
         </tr>
         
         <tr>
             <td>2026-02-04 08:35</td>
             <td><span class="signal short">SHORT</span></td>
-            <td>STRONG</td>
+            <td>Old Rule: STRONG</td>
             <td>HIGH</td>
-            <td>Pythonルールの根拠（米株下落）と日経の現状（+3.92%高騰）は矛盾しているが、この異常な高騰...</td>
+            <td class="reason-cell">Pythonルールの根拠（米株下落）と日経の現状（+3.92%高騰）は矛盾しているが、この異常な高騰自体が短期的な天井シグナルとなる。VIX指数が10.16%と大幅に上昇しており、市場の過熱感と不安定さを示すため、この高値からの強い反落（SHORT）を狙うのは極めて妥当であると判断する。ボラティリティが非常に高い環境下のため、ターゲットとストップは厳格に守る必要がある。</td>
         </tr>
         
         <tr>
             <td>2026-02-03 22:12</td>
             <td><span class="signal wait">WAIT</span></td>
-            <td>STRONG</td>
+            <td>Old Rule: STRONG</td>
             <td>MEDIUM</td>
-            <td>Pythonルールの判定根拠（米国株高、VIX低水準）は、リスクオン環境を示しており、LONGの方向...</td>
+            <td class="reason-cell">Pythonルールの判定根拠（米国株高、VIX低水準）は、リスクオン環境を示しており、LONGの方向性自体は妥当である。しかし、市場データを見ると、日経225が単日で+3.92%という異常な急騰を見せており、市場の過熱感が極めて高い。この水準から新たにLONGエントリーを行うと、短期的な利益確定売りによる急な反落リスク（高値掴みリスク）が無視できないほど高い。リスク管理の観点から、この急騰直後の追随買いは避け、一旦様子見（WAIT）として、適切な押し目でのエントリー機会を待つべきと判断する。</td>
         </tr>
         
         <tr>
             <td>2026-02-03 21:07</td>
             <td><span class="signal wait">WAIT</span></td>
-            <td>STRONG</td>
+            <td>Old Rule: STRONG</td>
             <td>MEDIUM</td>
-            <td>Pythonルールの根拠（米国株高、低VIX）は環境としてLONGを支持しているが、日経225が前日...</td>
+            <td class="reason-cell">Pythonルールの根拠（米国株高、低VIX）は環境としてLONGを支持しているが、日経225が前日比+3.92%という異常な高騰を示しており、市場に強い過熱感が確認される。この高値水準で追随エントリーすることは、短期的な利益確定売りに巻き込まれ、高値掴みとなるリスクが非常に高い。シグナルの方向性は尊重するが、リスク管理上、現在のタイミングでのエントリーは不適切と判断し、調整を待つべき。</td>
         </tr>
         
         <tr>
             <td>2026-02-03 21:03</td>
             <td><span class="signal long">LONG</span></td>
-            <td>STRONG</td>
+            <td>Old Rule: STRONG</td>
             <td>MEDIUM</td>
-            <td>米国株の大幅上昇（NYダウ+1.05%）とVIXの低水準、および円安基調が継続しており、LONGシグ...</td>
+            <td class="reason-cell">米国株の大幅上昇（NYダウ+1.05%）とVIXの低水準、および円安基調が継続しており、LONGシグナルの根拠は妥当である。しかし、日経225が単日で約4%と急騰しているため、短期的な過熱感と利益確定売りのリスクが高い。このため、自信度をMEDIUMに設定し、提示されたストップロス（200pt）を厳格に適用することを条件に、ルールを採用する。</td>
         </tr>
         
         <tr>
             <td>2026-02-03 20:51</td>
             <td><span class="signal long">LONG</span></td>
-            <td>N/A</td>
+            <td>Old Rule: -</td>
             <td>HIGH</td>
-            <td>米国株がS&P500、NYダウともに+0.3%を大幅に超えて上昇し、かつVIXが20未満であるため、...</td>
+            <td class="reason-cell">米国株がS&P500、NYダウともに+0.3%を大幅に超えて上昇し、かつVIXが20未満であるため、強いリスクオン環境が継続しています。また、ドル円も円安条件を満たしています。</td>
         </tr>
         
             </tbody>
@@ -257,6 +302,16 @@
             <tbody>
                 
         <tr>
+            <td>2026-02-04 08:35</td>
+            <td>2026-02-04 12:18</td>
+            <td>SHORT</td>
+            <td>54,721</td>
+            <td>54,450</td>
+            <td class="profit">¥+2,706</td>
+            <td>N/A</td>
+        </tr>
+        
+        <tr>
             <td>2026-02-03 20:51</td>
             <td>2026-02-03 22:12</td>
             <td>LONG</td>
@@ -269,7 +324,7 @@
             </tbody>
         </table>
         
-        <p class="updated">Last updated: 2026-02-04 02:39:01 UTC</p>
+        <p class="updated">Last updated: 2026-02-04 03:18:28 UTC</p>
     </div>
     
     <script>
@@ -277,10 +332,10 @@
         new Chart(ctx, {
             type: 'line',
             data: {
-                labels: [0, 1],
+                labels: [0, 1, 2],
                 datasets: [{
                     label: 'Capital (¥)',
-                    data: [100000, 98000.0],
+                    data: [100000, 98000.0, 100706.0],
                     borderColor: '#00d4ff',
                     backgroundColor: 'rgba(0, 212, 255, 0.1)',
                     fill: true,
