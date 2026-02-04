@@ -371,8 +371,9 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
         # Safer ATR handling
         safe_atr = atr_val if not math.isnan(atr_val) else 400.0
         
-        stop_dist = round_to_tick(safe_atr * 0.5)
-        target_dist = round_to_tick(safe_atr * 1.0)
+        # Optimized params (Stop 0.6 / Target 1.2)
+        stop_dist = round_to_tick(safe_atr * 0.6)
+        target_dist = round_to_tick(safe_atr * 1.2)
         
         stop_price = entry_price - stop_dist if prediction["direction"] == "LONG" else entry_price + stop_dist
         target_price = entry_price + target_dist if prediction["direction"] == "LONG" else entry_price - target_dist
