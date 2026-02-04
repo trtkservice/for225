@@ -443,16 +443,36 @@
         "approved": true
       },
       "atr": 1119.29
+    },
+    {
+      "timestamp": "2026-02-04 12:51",
+      "scores": {
+        "trend_score": 1.0,
+        "momentum_score": 0.2,
+        "volatility_score": 0.0,
+        "total_score": 0.48,
+        "details": {
+          "trend_summary": "Bullish",
+          "rsi": 63.6,
+          "vix": 18.0
+        }
+      },
+      "prediction": {
+        "direction": "LONG",
+        "approved": true,
+        "reasoning": "Strong foundational daily trend (1.0) supports the LONG signal. Momentum (0.2) is positive and not overbought (RSI 63.6). Approve entry based on trend conviction."
+      },
+      "atr": 1119.29
     }
   ],
   "shadow_portfolio": {
-    "capital": 100556.60000000003,
+    "capital": 100656.60000000003,
     "position": {
       "direction": "LONG",
-      "entry_date": "2026-02-04 12:40",
-      "entry_price": 54485,
-      "stop": 53815,
-      "target": 55830,
+      "entry_date": "2026-02-04 12:51",
+      "entry_price": 54500,
+      "stop": 53830,
+      "target": 55845,
       "stop_dist": 670,
       "target_dist": 1345
     },
@@ -483,6 +503,16 @@
         "direction": "LONG",
         "entry_price": 54470,
         "exit_price": 54485,
+        "pnl_points": 15,
+        "pnl_yen": 100,
+        "close_reason": "CLOSE_SESSION"
+      },
+      {
+        "entry_date": "2026-02-04 12:40",
+        "exit_date": "2026-02-04 12:51",
+        "direction": "LONG",
+        "entry_price": 54485,
+        "exit_price": 54500,
         "pnl_points": 15,
         "pnl_yen": 100,
         "close_reason": "CLOSE_SESSION"
