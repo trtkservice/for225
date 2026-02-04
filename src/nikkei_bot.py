@@ -59,6 +59,7 @@ class Config:
         "nikkei_futures": "NKD=F",
         "nikkei_index": "^N225",
         "vix": "^VIX",
+        "nikkei_vi": "^JNIV"
     }
 
 # --- Helper Functions ---
@@ -195,17 +196,41 @@ class AntigravityEngine:
         self.scores["momentum"] = round(np.clip(val, -1.0, 1.0), 3)
 
     def _analyze_volatility(self):
-        df = self.data.get("vix_daily")
-        val = 0
-        vix = 20.0
-        if df is not None and not df.empty:
-            vix = df['Close'].iloc[-1]
-            if vix < 15: val += 0.2
-            elif vix > 20: val -= 0.3
-            elif vix > 30: val -= 0.8
+        # 1. US VIX Check
+        vix_df = self.data.get("vix_daily")
+        vix_val = 0
+        current_vix = 20.0
         
-        self.scores["details"]["vix"] = round(vix, 2)
-        self.scores["volatility"] = round(val, 3)
+        if vix_df is not None and not vix_df.empty:
+            current_vix = vix_df['Close'].iloc[-1]
+            if current_vix > 30: vix_val = -0.8
+            elif current_vix > 20: vix_val = -0.2
+            else: vix_val = 0.2
+            
+        # 2. Nikkei VI Check (More relevant)
+        jniv_df = self.data.get("nikkei_vi_daily")
+        jniv_val = 0
+        current_jniv = 20.0
+        
+        if jniv_df is not None and not jniv_df.empty:
+            current_jniv = jniv_df['Close'].iloc[-1]
+            
+            # Absolute Level
+            if current_jniv > 25: jniv_val = -0.6 # High Stress -> Danger
+            elif current_jniv < 17: jniv_val = 0.3 # Calm -> Trend Friendly
+            
+            # Trend (Rising Fear?)
+            if len(jniv_df) > 5:
+                prev_jniv = jniv_df['Close'].iloc[-2]
+                if current_jniv > prev_jniv * 1.05: # >5% rise
+                    jniv_val -= 0.4 # Rising fear penalty
+        
+        # Combine (Local VI is more important)
+        total_val = (vix_val * 0.4) + (jniv_val * 0.6)
+        
+        self.scores["details"]["vix"] = round(current_vix, 2)
+        self.scores["details"]["jniv"] = round(current_jniv, 2)
+        self.scores["volatility"] = round(np.clip(total_val, -1.0, 1.0), 3)
 
     def _integrate(self):
         total = (self.scores["trend"] * Config.WEIGHT_TREND) + \
