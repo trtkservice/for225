@@ -10,9 +10,9 @@ CONTRACT_MULTIPLIER = 10
 COST_PER_TRADE = 50
 TICK_SIZE = 5
 
-# Risk Params (Optimized)
-STOP_ATR_MULT = 0.6
-TARGET_ATR_MULT = 1.2
+# Risk Params (Raptor Style Experiment)
+STOP_ATR_MULT = 1.2
+TARGET_ATR_MULT = 2.4
 
 def round_to_tick(price):
     return round(price / TICK_SIZE) * TICK_SIZE
