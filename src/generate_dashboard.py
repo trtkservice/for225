@@ -237,35 +237,35 @@ def generate_html(data):
             margin: 30px 0 20px;
             font-size: 1.3em;
         }}
-        .updated {
+        .updated {{
             text-align: center;
             color: #666;
             margin-top: 30px;
             font-size: 0.9em;
-        }
-        .score-grid {
+        }}
+        .score-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 5px;
             font-size: 0.8em;
             width: 160px;
-        }
-        .score-item {
+        }}
+        .score-item {{
             color: #aaa;
-        }
-        .score-total {
+        }}
+        .score-total {{
             grid-column: span 2;
             border-top: 1px solid rgba(255,255,255,0.1);
             margin-top: 5px;
             padding-top: 2px;
             text-align: center;
-        }
-        .reason-cell {
+        }}
+        .reason-cell {{
             font-size: 0.85em;
             color: #ccc;
             max-width: 400px;
             line-height: 1.4;
-        }
+        }}
     </style>
 </head>
 <body>
