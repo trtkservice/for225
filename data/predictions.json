@@ -374,6 +374,29 @@
         "reasoning": "PythonルールのSHORTシグナルは妥当。米国株は下落（S&P 500: -0.84%）に留まるが、VIXが10%超急騰し、市場全体のリスクオフ心理が非常に高まっていることを示す。円安進行にもかかわらず日経平均が売られている点も、強い売り圧力を裏付ける。SHORTポジションを採用し、VIX高騰によるボラティリティ増加を考慮し、ストップポイントを200ポイントとする。",
         "approved": true
       }
+    },
+    {
+      "timestamp": "2026-02-04 11:38",
+      "scores": {
+        "trend_score": 1.0,
+        "momentum_score": 0.3,
+        "volatility_score": 0.0,
+        "total_score": 0.52,
+        "details": {
+          "ema_alignment": "Bullish",
+          "rsi_15m": 60.5,
+          "vix": 18.0
+        },
+        "signal": "LONG",
+        "strength": "MEDIUM"
+      },
+      "prediction": {
+        "direction": "LONG",
+        "confidence": "HIGH",
+        "reasoning": "Trendレイヤーが最大の1.0であり、市場の基調が強固な強気であることを示している。短期モメンタム（RSI 60.5）は過熱感がなく、十分な上昇余地を残している。VIXも安定しており、リスク許容度が高い状態。これは教科書通りの高確率なトレンド継続エントリーであり、即時エントリー（LONG）を承認する。",
+        "approved": true
+      },
+      "atr": 1119.29
     }
   ],
   "shadow_portfolio": {
