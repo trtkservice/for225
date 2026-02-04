@@ -117,74 +117,106 @@ def run_backtest():
     
     print("RUNNING SIMULATION...")
     
+    # State
+    position = None # { 'type': 'LONG', 'entry': 0, 'stop': 0, 'target': 0, 'days': 0 }
+    
     for i in range(200, len(nikkei)-1):
-        # Extract scalar values explicitly to avoid Series comparison error
         today_row = nikkei.iloc[i]
-        today_close = float(today_row['Close'])
-        today_ema20 = float(today_row['EMA20'])
-        today_ema50 = float(today_row['EMA50'])
-        today_ema200 = float(today_row['EMA200'])
         
-        # Pass dictionary with scalars instead of Series
+        # --- 1. Manage Open Position ---
+        if position:
+            # Check today's OHLC to see if Stop/Target hit
+            # We assume position exists from previous close, so we check today's range
+            t_open = float(today_row['Open'])
+            t_high = float(today_row['High'])
+            t_low = float(today_row['Low'])
+            t_close = float(today_row['Close'])
+            
+            p_type = position['type']
+            stop = position['stop']
+            target = position['target']
+            
+            hit_stop = False
+            hit_target = False
+            exit_price = t_close
+            reason = ""
+            
+            # Check price events
+            if p_type == "LONG":
+                # Check Open gap
+                if t_open <= stop: hit_stop = True; exit_price = t_open; reason = "STOP_GAP"
+                elif t_open >= target: hit_target = True; exit_price = t_open; reason = "TARGET_GAP"
+                # Check Intraday
+                elif t_low <= stop: hit_stop = True; exit_price = stop; reason = "STOP"
+                elif t_high >= target: hit_target = True; exit_price = target; reason = "TARGET"
+            else: # SHORT
+                if t_open >= stop: hit_stop = True; exit_price = t_open; reason = "STOP_GAP"
+                elif t_open <= target: hit_target = True; exit_price = t_open; reason = "TARGET_GAP"
+                elif t_high >= stop: hit_stop = True; exit_price = stop; reason = "STOP"
+                elif t_low <= target: hit_target = True; exit_price = target; reason = "TARGET"
+                
+            # Time Stop (Force close after 5 days)
+            if not hit_stop and not hit_target and position['days'] >= 5:
+                exit_price = t_close
+                reason = "TIME_STOP"
+                hit_stop = True # Treat as close
+                
+            if hit_stop or hit_target:
+                # Close Position
+                pnl_points = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
+                gross = pnl_points * CONTRACT_MULTIPLIER
+                net = gross - COST_PER_TRADE
+                capital += net
+                trades.append(net)
+                position = None
+            else:
+                # Hold Overnight
+                position['days'] += 1
+            
+            equity_curve.append(capital)
+            continue # Skip new entry if holding
+
+        # --- 2. New Entry Logic ---
+        # Data Prep (Dictionary for minimal comparison)
         idx_data = {
-            'Close': today_close,
-            'EMA20': today_ema20,
-            'EMA50': today_ema50,
-            'EMA200': today_ema200,
+            'Close': float(today_row['Close']),
+            'EMA20': float(today_row['EMA20']),
+            'EMA50': float(today_row['EMA50']),
+            'EMA200': float(today_row['EMA200']),
             'RSI': float(today_row['RSI']),
             'MACD_Hist': float(today_row['MACD_Hist']),
             'ATR': float(today_row['ATR']) if not pd.isna(today_row['ATR']) else 400.0
         }
-        
         vix_val = float(vix.iloc[i])
         
-        # 1. Signal
         signal = get_signal(idx_data, vix_val)
         
         if signal == "WAIT":
             equity_curve.append(capital)
             continue
 
-        # 2. Setup Trade
-        tomorrow = nikkei.iloc[i+1] # Trading Day remains DataFrame row
-        atr = idx_data['ATR'] # Usescalar from dict
+        # Open Position (Execution at Tomorrow Open)
+        # Note: In Daily loop, 'i+1' is tomorrow. But we are iterating 'i'.
+        # To simulate correctly: Signal at close of 'i', Entry at Open of 'i+1'.
+        # The 'Manage Open Position' block above handles 'i' as the trading day.
+        # So we must setup position for NEXT loop iteration (i+1).
         
-        entry_price = round_to_tick(float(tomorrow['Open'])) # Enter at Open
+        tomorrow_row = nikkei.iloc[i+1]
+        entry_price = round_to_tick(float(tomorrow_row['Open']))
+        atr = idx_data['ATR']
+        
         stop_dist = round_to_tick(atr * STOP_ATR_MULT)
         target_dist = round_to_tick(atr * TARGET_ATR_MULT)
         
-        stop_price = entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist
-        target_price = entry_price + target_dist if signal == "LONG" else entry_price - target_dist
+        position = {
+            'type': signal,
+            'entry': entry_price,
+            'stop': entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist,
+            'target': entry_price + target_dist if signal == "LONG" else entry_price - target_dist,
+            'days': 0
+        }
         
-        # 3. Sim Execution (Intraday approx check)
-        t_high = tomorrow['High']
-        t_low = tomorrow['Low']
-        t_close = tomorrow['Close']
-        
-        hit_stop = False
-        hit_target = False
-        
-        if signal == "LONG":
-            if t_low <= stop_price: hit_stop = True
-            if t_high >= target_price: hit_target = True
-        else:
-            if t_high >= stop_price: hit_stop = True
-            if t_low <= target_price: hit_target = True
-            
-        # Outcome Logic
-        exit_price = t_close
-        if hit_stop:
-            exit_price = stop_price
-        elif hit_target:
-            exit_price = target_price
-            
-        # PnL
-        p_diff = (exit_price - entry_price) if signal == "LONG" else (entry_price - exit_price)
-        gross = p_diff * CONTRACT_MULTIPLIER
-        net = gross - COST_PER_TRADE
-        
-        capital += net
-        trades.append(net)
+        # Entry cost is realized at exit, so no change to capital yet
         equity_curve.append(capital)
         
     # Results
