@@ -23,9 +23,8 @@ class Config:
     JST = pytz.timezone('Asia/Tokyo')
     DATA_FILE = "data/predictions.json"
     
-    # Trading Specs (Current: Nikkei 225 Micro Futures)
-    # Note: For OANDA CFD, set CONTRACT_MULTIPLIER = 1 or 0.1 depending on course
-    CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY (Micro Futures)
+    # Trading Specs (Nikkei 225 Micro)
+    CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
     TICK_SIZE = 5             # Minimum fluctuation
     COST_PER_TRADE = 50       # Estimated commission + slippage per trade
     
