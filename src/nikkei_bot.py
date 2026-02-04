@@ -46,10 +46,6 @@ class Config:
         }
     }
     
-    # Money Management
-    COMPOUND_MODE = True
-    TARGET_LEVERAGE = 10.0  # Effective Leverage Target (e.g. 10x)
-
     # Antigravity Weights
     WEIGHT_TREND = 0.4
     WEIGHT_MOMENTUM = 0.4
@@ -351,10 +347,9 @@ class PortfolioManager:
                 reason = "TIME_STOP"
                 
             if exit_price is not None:
-                lots = pos.get("lots", 1)  # Default 1 lot
                 p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * lots
-                net_pnl = gross_pnl - (Config.COST_PER_TRADE * lots)
+                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
+                net_pnl = gross_pnl - Config.COST_PER_TRADE
                 
                 pf["capital"] += net_pnl
                 pf["trades"].append({
@@ -363,14 +358,13 @@ class PortfolioManager:
                     "direction": direction,
                     "entry_price": int(entry),
                     "exit_price": int(exit_price),
-                    "lots": lots,
                     "pnl_points": int(p_diff),
                     "pnl_yen": int(net_pnl),
                     "close_reason": reason,
                     "days_held": days_held
                 })
                 pf["position"] = None
-                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+,} (Lots:{lots})")
+                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+}")
             else:
                 print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held}")
             
@@ -393,19 +387,6 @@ class PortfolioManager:
             stop_mult = strat_conf["stop_mult"]
             target_mult = strat_conf["target_mult"]
             
-            # --- Money Management (Strict) ---
-            # Calculate max lots based on Target Leverage (e.g. 10x)
-            # 1 Micro Lot Value = Price * 10 JPY
-            # Required Margin (Safety) = Value / Leverage
-            
-            current_capital = pf.get("capital", 100000)
-            contract_value = entry_price * Config.CONTRACT_MULTIPLIER
-            margin_per_lot = contract_value / Config.TARGET_LEVERAGE
-            
-            lots = int(current_capital / margin_per_lot)
-            if lots < 1: lots = 1
-            
-            # Stop/Target dist
             stop_dist = round_to_tick(safe_atr * stop_mult)
             target_dist = round_to_tick(safe_atr * target_mult)
             
@@ -418,11 +399,10 @@ class PortfolioManager:
                 "entry_price": int(entry_price),
                 "stop": int(stop_price),
                 "target": int(target_price),
-                "strategy": strat_key,
-                "lots": lots
+                "strategy": strat_key
             }
             self.data["portfolios"][strat_key] = pf
-            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Lots:{lots} Stop:{stop_price} Target:{target_price})")
+            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Stop:{stop_price} Target:{target_price})")
 
     def log_prediction(self, scores, prediction, atr):
         # Allow JSON serialization of scores (convert numpy types)
