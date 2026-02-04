@@ -3,153 +3,187 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nikkei 225 Trading Dashboard</title>
+    <title>Antigravity A/B Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #eee; min-height: 100vh; padding: 20px; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        h1 { text-align: center; margin-bottom: 30px; font-size: 2em; background: linear-gradient(90deg, #00d4ff, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-        .stat-card { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
-        .stat-card h3 { font-size: 0.9em; color: #888; margin-bottom: 10px; }
-        .stat-card .value { font-size: 2em; font-weight: bold; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 20px; font-size: 2em; background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        /* A/B Comparison Layout */
+        .strategy-container { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 40px; }
+        .strategy-col { background: rgba(255,255,255,0.02); border-radius: 20px; padding: 20px; border: 1px solid rgba(255,255,255,0.05); }
+        .strategy-header { text-align: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .strategy-name { font-size: 1.5em; font-weight: bold; margin-bottom: 5px; }
+        .strategy-desc { font-size: 0.9em; color: #888; }
+        
+        .col-normal { border-top: 5px solid #00d4ff; }
+        .col-raptor { border-top: 5px solid #ff6b6b; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: rgba(0,0,0,0.2); border-radius: 10px; padding: 15px; text-align: center; }
+        .stat-card h3 { font-size: 0.8em; color: #aaa; margin-bottom: 5px; }
+        .stat-card .value { font-size: 1.4em; font-weight: bold; }
+        
         .profit { color: #00d4ff; }
         .loss { color: #ff6b6b; }
         .neutral { color: #888; }
-        .chart-container { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 20px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
-        table { width: 100%; border-collapse: collapse; background: rgba(255,255,255,0.05); border-radius: 15px; overflow: hidden; }
-        th, td { padding: 15px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        th { background: rgba(0,0,0,0.3); font-weight: 600; }
-        .signal { padding: 5px 15px; border-radius: 20px; font-weight: bold; font-size: 0.85em; }
+        
+        .chart-container { background: rgba(0,0,0,0.2); border-radius: 15px; padding: 20px; margin-bottom: 40px; border: 1px solid rgba(255,255,255,0.05); height: 400px; }
+        
+        table { width: 100%; border-collapse: collapse; font-size: 0.9em; margin-top: 10px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        th { background: rgba(0,0,0,0.3); font-weight: 600; color: #aaa; }
+        
+        .signal { padding: 3px 10px; border-radius: 10px; font-weight: bold; font-size: 0.8em; }
         .signal.long { background: rgba(0, 212, 255, 0.2); color: #00d4ff; }
         .signal.short { background: rgba(255, 107, 107, 0.2); color: #ff6b6b; }
-        .signal.wait { background: rgba(136, 136, 136, 0.2); color: #888; }
-        .position-card { background: rgba(255,255,255,0.05); border-radius: 15px; padding: 25px; margin-bottom: 30px; border: 1px solid rgba(255,255,255,0.1); }
-        .position-card.long { border-color: rgba(0, 212, 255, 0.5); }
-        .position-card.short { border-color: rgba(255, 107, 107, 0.5); }
-        .section-title { margin: 30px 0 20px; font-size: 1.3em; }
-        .updated { text-align: center; color: #666; margin-top: 30px; font-size: 0.9em; }
-        .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.8em; width: 160px; }
-        .score-item { color: #aaa; }
-        .score-total { grid-column: span 2; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 5px; padding-top: 2px; text-align: center; }
-        .reason-cell { font-size: 0.85em; color: #ccc; max-width: 400px; line-height: 1.4; }
-    
+        
+        .position-card { background: rgba(0,0,0,0.3); border-radius: 10px; padding: 15px; margin-bottom: 20px; border-left: 5px solid #888; }
+        .position-card.long { border-left-color: #00d4ff; }
+        .position-card.short { border-left-color: #ff6b6b; }
+        .position-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9em; }
+        
+        .section-title { text-align: center; margin: 40px 0 20px; font-size: 1.5em; border-bottom: 2px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
+        
+        /* Prediction Log Styles */
+        .score-grid { display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 8px; font-size: 0.8em; align-items: center; }
+        .score-item b { margin-left: 3px; }
+        
+        @media (max-width: 1000px) {
+            .strategy-container { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Antigravity Trading Dashboard</h1>
+        <h1>🚀 Antigravity Battle Arena</h1>
+        <p style="text-align:center; color:#888; margin-bottom:30px">A/B Testing: Optimized (Normal) vs Raptor (Wide)</p>
+        
+        <div class="chart-container">
+            <canvas id="performanceChart"></canvas>
+        </div>
+        
+        <div class="strategy-container">
+            
+    <div class="strategy-col col-normal">
+        <div class="strategy-header">
+            <div class="strategy-name">Antigravity (Normal)</div>
+            <div class="strategy-desc">Stop:0.6 / Target:1.2 (Balanced)</div>
+        </div>
         
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>💰 Capital</h3>
+                <h3>Capital</h3>
                 <div class="value">¥100,000</div>
             </div>
             <div class="stat-card">
-                <h3>📊 Total P&L</h3>
-                <div class="value profit">¥+0</div>
+                <h3>Return</h3>
+                <div class="value profit">+0.0%</div>
             </div>
             <div class="stat-card">
-                <h3>📈 Return</h3>
-                <div class="value profit">+0.00%</div>
+                <h3>Win Rate</h3>
+                <div class="value">0%</div>
             </div>
             <div class="stat-card">
-                <h3>🎯 Win Rate</h3>
-                <div class="value">0.0%</div>
-            </div>
-            <div class="stat-card">
-                <h3>📝 Total Trades</h3>
-                <div class="value">0</div>
-            </div>
-            <div class="stat-card">
-                <h3>🔮 Predictions</h3>
+                <h3>Trades</h3>
                 <div class="value">0</div>
             </div>
         </div>
         
+        <h3>📍 Current Position</h3>
+        <div class="position-card"><div style="color:#aaa; text-align:center">No Open Position</div></div>
         
-        <div class="position-card neutral">
-            <h3>📍 Current Position</h3>
-            <p>No open position</p>
+        <h3>💹 Recent Trades</h3>
+        <table>
+            <thead><tr><th>Date</th><th>Dir</th><th>PnL</th><th>Reason</th></tr></thead>
+            <tbody><tr><td colspan="4" style="text-align:center">No trades yet</td></tr></tbody>
+        </table>
+    </div>
+    
+            
+    <div class="strategy-col col-raptor">
+        <div class="strategy-header">
+            <div class="strategy-name">Raptor (Wide)</div>
+            <div class="strategy-desc">Stop:1.2 / Target:2.4 (High Grip)</div>
         </div>
         
-        
-        <div class="chart-container">
-            <canvas id="capitalChart"></canvas>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Capital</h3>
+                <div class="value">¥100,000</div>
+            </div>
+            <div class="stat-card">
+                <h3>Return</h3>
+                <div class="value profit">+0.0%</div>
+            </div>
+            <div class="stat-card">
+                <h3>Win Rate</h3>
+                <div class="value">0%</div>
+            </div>
+            <div class="stat-card">
+                <h3>Trades</h3>
+                <div class="value">0</div>
+            </div>
         </div>
         
-        <h2 class="section-title">📋 Recent Predictions</h2>
+        <h3>📍 Current Position</h3>
+        <div class="position-card"><div style="color:#aaa; text-align:center">No Open Position</div></div>
+        
+        <h3>💹 Recent Trades</h3>
         <table>
-            <thead>
-                <tr>
-                    <th>Timestamp</th>
-                    <th>Signal</th>
-                    <th>Scores (Antigravity)</th>
-                    <th>Confidence</th>
-                    <th>Reasoning</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr><td colspan="5">No predictions yet</td></tr>
-            </tbody>
+            <thead><tr><th>Date</th><th>Dir</th><th>PnL</th><th>Reason</th></tr></thead>
+            <tbody><tr><td colspan="4" style="text-align:center">No trades yet</td></tr></tbody>
+        </table>
+    </div>
+    
+        </div>
+        
+        <h2 class="section-title">🔮 AI Market Analysis Log</h2>
+        <table>
+            <thead><tr><th>Time</th><th>Signal</th><th>ATR</th><th>Scores (T/M/V)</th><th>Reasoning</th></tr></thead>
+            <tbody><tr><td colspan="5" style="text-align:center">No Data</td></tr></tbody>
         </table>
         
-        <h2 class="section-title">💹 Trade History</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Entry</th>
-                    <th>Exit</th>
-                    <th>Direction</th>
-                    <th>Entry Price</th>
-                    <th>Exit Price</th>
-                    <th>P&L</th>
-                    <th>Reason</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr><td colspan="7">No trades yet</td></tr>
-            </tbody>
-        </table>
-        
-        <p class="updated">Last updated: 2026-02-04 04:16:46 UTC</p>
+        <p class="updated">Last updated: 2026-02-04 05:07:56 JST</p>
     </div>
     
     <script>
-        const ctx = document.getElementById('capitalChart').getContext('2d');
+        const ctx = document.getElementById('performanceChart').getContext('2d');
         new Chart(ctx, {
             type: 'line',
             data: {
                 labels: [0],
-                datasets: [{
-                    label: 'Capital (¥)',
-                    data: [100000],
-                    borderColor: '#00d4ff',
-                    backgroundColor: 'rgba(0, 212, 255, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                }]
+                datasets: [
+                    {
+                        label: 'Antigravity (Normal)',
+                        data: [100000],
+                        borderColor: '#00d4ff',
+                        backgroundColor: 'rgba(0, 212, 255, 0.1)',
+                        tension: 0.3,
+                        borderWidth: 3
+                    },
+                    {
+                        label: 'Raptor (Wide)',
+                        data: [100000],
+                        borderColor: '#ff6b6b',
+                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        tension: 0.3,
+                        borderWidth: 3
+                    }
+                ]
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        labels: { color: '#eee' }
-                    }
+                    legend: { labels: { color: '#eee', font: { size: 14 } } },
+                    title: { display: true, text: 'Equity Curve Comparison', color: '#888' }
                 },
                 scales: {
-                    x: {
-                        title: { display: true, text: 'Trade #', color: '#888' },
-                        ticks: { color: '#888' },
-                        grid: { color: 'rgba(255,255,255,0.1)' }
-                    },
-                    y: {
-                        title: { display: true, text: 'Capital (¥)', color: '#888' },
-                        ticks: { color: '#888' },
-                        grid: { color: 'rgba(255,255,255,0.1)' }
-                    }
+                    y: { grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#888' } },
+                    x: { display: false }
                 }
             }
         });
