@@ -300,6 +300,80 @@
         "reasoning": "Pythonルールの根拠（米株下落）と日経の現状（+3.92%高騰）は矛盾しているが、この異常な高騰自体が短期的な天井シグナルとなる。VIX指数が10.16%と大幅に上昇しており、市場の過熱感と不安定さを示すため、この高値からの強い反落（SHORT）を狙うのは極めて妥当であると判断する。ボラティリティが非常に高い環境下のため、ターゲットとストップは厳格に守る必要がある。",
         "approved": true
       }
+    },
+    {
+      "timestamp": "2026-02-04 11:36",
+      "market_data": {
+        "nikkei_futures": {
+          "close": 54540.0,
+          "high": 54570.0,
+          "low": 53985.0,
+          "prev_close": 54010.0,
+          "change_pct": 0.98,
+          "atr": null
+        },
+        "nikkei_index": {
+          "close": 54429.21,
+          "high": 54459.41,
+          "low": 53965.51,
+          "prev_close": 54720.66,
+          "change_pct": -0.53,
+          "atr": 1178.83
+        },
+        "sp500": {
+          "close": 6917.81,
+          "high": 6993.08,
+          "low": 6862.05,
+          "prev_close": 6976.44,
+          "change_pct": -0.84,
+          "atr": null
+        },
+        "dow": {
+          "close": 49240.99,
+          "high": 49653.13,
+          "low": 48832.78,
+          "prev_close": 49407.66,
+          "change_pct": -0.34,
+          "atr": null
+        },
+        "vix": {
+          "close": 18.0,
+          "high": 20.37,
+          "low": 16.05,
+          "prev_close": 16.34,
+          "change_pct": 10.16,
+          "atr": null
+        },
+        "usdjpy": {
+          "close": 156.19,
+          "high": 156.21,
+          "low": 155.68,
+          "prev_close": 155.44,
+          "change_pct": 0.48,
+          "atr": null
+        },
+        "us10y": {
+          "close": 4.27,
+          "high": 4.3,
+          "low": 4.27,
+          "prev_close": 4.28,
+          "change_pct": -0.02,
+          "atr": null
+        }
+      },
+      "rule_check": {
+        "signal": "SHORT",
+        "strength": "STRONG",
+        "reason": "米国株大幅下落"
+      },
+      "prediction": {
+        "direction": "SHORT",
+        "confidence": "HIGH",
+        "stop_points": 589,
+        "target_points": 1178,
+        "reasoning": "PythonルールのSHORTシグナルは妥当。米国株は下落（S&P 500: -0.84%）に留まるが、VIXが10%超急騰し、市場全体のリスクオフ心理が非常に高まっていることを示す。円安進行にもかかわらず日経平均が売られている点も、強い売り圧力を裏付ける。SHORTポジションを採用し、VIX高騰によるボラティリティ増加を考慮し、ストップポイントを200ポイントとする。",
+        "approved": true
+      }
     }
   ],
   "shadow_portfolio": {
