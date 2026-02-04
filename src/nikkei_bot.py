@@ -51,6 +51,9 @@ class Config:
     WEIGHT_MOMENTUM = 0.4
     WEIGHT_VOLATILITY = 0.2
     
+    # RiskGate (Gap Filter)
+    GAP_THRESHOLD = 0.005  # 0.5% (approx 200 JPY) -> Skip if gap is too large
+    
     # Tickers
     TICKERS = {
         "nikkei_futures": "NKD=F",
@@ -484,8 +487,17 @@ class NikkeiBot:
         # 6. Record Prediction
         self.portfolio.log_prediction(scores, prediction, current_atr)
         
-        # 7. Open New Positions (A/B Test)
-        if prediction['approved']:
+        # 7. Open New Positions (A/B Test) - with RiskGate
+        gap_wait = False
+        prev_close = nikkei.iloc[-2]['Close']
+        gap_rate = abs(current_price - prev_close) / prev_close
+        
+        if gap_rate >= Config.GAP_THRESHOLD:
+            print(f"⚠️ RiskGate Triggered: Gap {gap_rate*100:.2f}% >= {Config.GAP_THRESHOLD*100:.1f}%")
+            print("   ⛔ Entry Canceled to avoid gap risk.")
+            gap_wait = True
+            
+        if prediction['approved'] and not gap_wait:
             self.portfolio.open_position(prediction, current_price, current_atr)
         
         # 8. Save State

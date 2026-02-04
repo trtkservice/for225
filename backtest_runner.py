@@ -138,6 +138,14 @@ def run_simulation(nikkei, vix, stop_mult, target_mult):
         # 3. Enter Next Open
         next_day = daily_records[i+1]
         entry_price = round_to_tick(next_day['Open'])
+        
+        # RiskGate Check (Gap Filter)
+        prev_close = daily_records[i]['Close']
+        gap_rate = abs(entry_price - prev_close) / prev_close
+        if gap_rate >= Config.GAP_THRESHOLD:
+            # print(f"⚠️ Skip Gap: {gap_rate*100:.2f}%")
+            continue
+            
         atr = atr_records[i]
         if pd.isna(atr): atr = 400.0
         
