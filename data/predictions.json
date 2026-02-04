@@ -420,18 +420,41 @@
         "approved": true
       },
       "atr": 1119.29
+    },
+    {
+      "timestamp": "2026-02-04 12:40",
+      "scores": {
+        "trend_score": 1.0,
+        "momentum_score": 0.3,
+        "volatility_score": 0.0,
+        "total_score": 0.52,
+        "details": {
+          "ema_alignment": "Bullish",
+          "rsi_15m": 62.7,
+          "vix": 18.0
+        },
+        "signal": "LONG",
+        "strength": "MEDIUM"
+      },
+      "prediction": {
+        "direction": "LONG",
+        "confidence": "HIGH",
+        "reasoning": "日足トレンドスコア(1.0)が極めて強力であり、市場構造が明確に上昇局面にあることを示す。短期的な15分足モメンタム(RSI 62.7, スコア0.3)は過熱域に入っておらず、強いトレンドの中での健全な継続を示唆している。これは、無理な調整を待つ必要のない、理想的な順張りエントリーシグナルである。VIX 18.0は市場にパニックや極端な警戒感がなく、リスク許容度が維持されている環境を裏付ける。総合的に、このLONGシグナルは構造的・技術的に極めて信頼性が高い。",
+        "approved": true
+      },
+      "atr": 1119.29
     }
   ],
   "shadow_portfolio": {
-    "capital": 100456.60000000003,
+    "capital": 100556.60000000003,
     "position": {
       "direction": "LONG",
-      "entry_date": "2026-02-04 12:34",
-      "entry_price": 54470,
-      "stop": 53910,
-      "target": 55590,
-      "stop_dist": 560,
-      "target_dist": 1120
+      "entry_date": "2026-02-04 12:40",
+      "entry_price": 54485,
+      "stop": 53815,
+      "target": 55830,
+      "stop_dist": 670,
+      "target_dist": 1345
     },
     "trades": [
       {
@@ -452,6 +475,16 @@
         "exit_price": 54470,
         "pnl_points": 250,
         "pnl_yen": 2456,
+        "close_reason": "CLOSE_SESSION"
+      },
+      {
+        "entry_date": "2026-02-04 12:34",
+        "exit_date": "2026-02-04 12:40",
+        "direction": "LONG",
+        "entry_price": 54470,
+        "exit_price": 54485,
+        "pnl_points": 15,
+        "pnl_yen": 100,
         "close_reason": "CLOSE_SESSION"
       }
     ]
