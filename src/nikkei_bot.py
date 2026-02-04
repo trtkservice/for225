@@ -301,7 +301,7 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
     
     entry_price = price # Use close as "current" for simulation entry
 
-    # Manage Open Position
+    # Manage Open Position (Force Close at session end)
     if portfolio.get("position"):
         pos = portfolio["position"]
         direction = pos["direction"]
@@ -319,26 +319,32 @@ def update_shadow_portfolio(data, prediction, market_data, atr_val):
             hit_stop = high >= stop
             hit_target = low <= target
             
-        closed = False
-        reason = ""
-        exit_p = price
+        closed = True  # ALWAYS close at the end of session (Day/Night separation)
+        reason = "CLOSE_SESSION" # Default reason
+        exit_p = price # Default exit at close price
         
         if hit_stop:
-            closed = True; reason = "STOP"; exit_p = stop
+            reason = "STOP"; exit_p = stop
+            # If hit stop, check if we prioritize stop over target (conservative)
+            if hit_target:
+                 # Dual hit: conservative assume STOP
+                 pass
         elif hit_target:
-            closed = True; reason = "TARGET"; exit_p = target
+            reason = "TARGET"; exit_p = target
             
-        if closed:
-            pnl = (exit_p - pos["entry_price"]) * 10 if direction == "LONG" else (pos["entry_price"] - exit_p) * 10
-            portfolio["capital"] += pnl
-            portfolio["trades"].append({
-                "entry_date": pos["entry_date"],
-                "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
-                "direction": direction,
-                "pnl_yen": int(pnl),
-                "reason": reason
-            })
-            portfolio["position"] = None
+        # Calculate PnL
+        pnl = (exit_p - pos["entry_price"]) * 10 if direction == "LONG" else (pos["entry_price"] - exit_p) * 10
+        portfolio["capital"] += pnl
+        portfolio["trades"].append({
+            "entry_date": pos["entry_date"],
+            "exit_date": datetime.now(JST).strftime("%Y-%m-%d %H:%M"),
+            "direction": direction,
+            "entry_price": pos["entry_price"],
+            "exit_price": exit_p,
+            "pnl_yen": int(pnl),
+            "reason": reason
+        })
+        portfolio["position"] = None
 
     # Open New Position
     if prediction["direction"] in ["LONG", "SHORT"] and not portfolio.get("position"):
