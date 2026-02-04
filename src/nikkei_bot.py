@@ -32,6 +32,7 @@ class Config:
     SHADOW_CAPITAL = 100000
     RISK_STOP_ATR_MULT = 0.6  # Optimized Parameter
     RISK_TARGET_ATR_MULT = 1.2 # Optimized Parameter
+    MAX_HOLD_DAYS = 5         # Swing Trade Time Limit
     
     # Antigravity Weights
     WEIGHT_TREND = 0.4
@@ -283,40 +284,55 @@ class PortfolioManager:
         with open(self.file, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
-    def update_session(self, current_price_raw, low, high, atr):
+    def update_session(self, current_price_raw: float, low: float, high: float, atr: float):
         """
-        1. Close existing positions (Session Close).
-        2. Return clean slate for new entry.
+        Check existing position for Stop/Target or Time Expiration.
+        If active, hold overnight (do not close).
         """
         pf = self.data["shadow_portfolio"]
+        if not pf.get("position"):
+            return # Nothing to manage
+
+        pos = pf["position"]
+        direction = pos["direction"]
+        entry = pos["entry_price"]
+        stop = pos["stop"]
+        target = pos["target"]
         
-        # --- Close Strategy ---
-        if pf.get("position"):
-            pos = pf["position"]
-            direction = pos["direction"]
-            entry = pos["entry_price"]
-            stop = pos["stop"]
-            target = pos["target"]
+        # 1. Check Price Events (Stop/Target)
+        hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
+        hit_target = (high >= target) if direction == "LONG" else (low <= target)
+        
+        # 2. Check Time Expiration
+        try:
+            entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d %H:%M").replace(tzinfo=Config.JST)
+            now_dt = datetime.now(Config.JST)
+            days_held = (now_dt - entry_dt).days
+        except:
+            days_held = 99 # Fallback if parsing fails
             
-            # Outcome Check
-            hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
-            hit_target = (high >= target) if direction == "LONG" else (low <= target)
+        time_stop = days_held >= Config.MAX_HOLD_DAYS
+        
+        # 3. Determine Outcome
+        exit_price = None
+        reason = None
+        
+        if hit_stop:
+            exit_price = stop # Conservative fill
+            reason = "STOP"
+            if hit_target: pass # Assume stop hit if both touched (Conservative)
+        elif hit_target:
+            exit_price = target
+            reason = "TARGET"
+        elif time_stop:
+            exit_price = round_to_tick(current_price_raw)
+            reason = "TIME_STOP"
             
-            exit_price = round_to_tick(current_price_raw) # Default: Session Close
-            reason = "CLOSE_SESSION"
-            
-            if hit_stop:
-                # Conservative Rule: If both hit, assume STOP
-                exit_price = stop
-                reason = "STOP"
-            elif hit_target:
-                exit_price = target
-                reason = "TARGET"
-                
-            # Calc PnL
-            exit_price = round_to_tick(exit_price)
-            point_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-            gross_pnl = point_diff * Config.CONTRACT_MULTIPLIER
+        # 4. Execute Close (if condition met)
+        if exit_price is not None:
+            # PnL Calc
+            p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
+            gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
             net_pnl = gross_pnl - Config.COST_PER_TRADE
             
             pf["capital"] += net_pnl
@@ -326,21 +342,28 @@ class PortfolioManager:
                 "direction": direction,
                 "entry_price": int(entry),
                 "exit_price": int(exit_price),
-                "pnl_points": int(point_diff),
+                "pnl_points": int(p_diff),
                 "pnl_yen": int(net_pnl),
-                "close_reason": reason
+                "close_reason": reason,
+                "days_held": days_held
             })
             pf["position"] = None
-        
+            print(f"🛑 Closed Position: {reason} PnL: {net_pnl:+}")
+        else:
+            print(f"🛌 Overnight Hold: {direction} (Day {days_held}) Px: {current_price_raw:.0f}")
+
         self.data["shadow_portfolio"] = pf
 
     def open_position(self, prediction, current_price_raw, atr_val):
-        """Open a new position if signal exists."""
+        """Open a new position if signal exists and NO position is currently open."""
         signal = prediction["direction"]
-        if signal not in ["LONG", "SHORT"]: return
         
         pf = self.data["shadow_portfolio"]
-        if pf.get("position"): return # Should be empty due to update_session, but safety check
+        if pf.get("position"):
+            # Already holding a position (Swing Trade)
+            return 
+            
+        if signal not in ["LONG", "SHORT"]: return
 
         entry_price = round_to_tick(current_price_raw)
         safe_atr = atr_val if not pd.isna(atr_val) else 400.0
@@ -358,8 +381,6 @@ class PortfolioManager:
             "entry_price": int(entry_price),
             "stop": int(stop_price),
             "target": int(target_price),
-            "stop_dist": int(stop_dist),
-            "target_dist": int(target_dist)
         }
         self.data["shadow_portfolio"] = pf
 
