@@ -266,19 +266,15 @@ class AntigravityEngine:
             if patterns.get("bullish_pinbar") or patterns.get("bullish_engulfing"):
                 if total > 0: 
                     pattern_mult = 1.3 # Boost Long
-                    print("   🕯️ Bullish Pattern Detected! Boosting Long.")
                 elif total < 0:
                     pattern_mult = 0.1 # Negate Short (Counter-trend risk)
-                    print("   🕯️ Bullish Pattern vs Short Signal -> Canceled.")
 
             # 2. Bearish Patterns
             if patterns.get("bearish_pinbar") or patterns.get("bearish_engulfing"):
                 if total < 0:
                     pattern_mult = 1.3 # Boost Short
-                    print("   🕯️ Bearish Pattern Detected! Boosting Short.")
                 elif total > 0:
                     pattern_mult = 0.1 # Negate Long (Top reversal risk)
-                    print("   🕯️ Bearish Pattern vs Long Signal -> Canceled.")
         
         total *= pattern_mult
         self.scores["total"] = round(np.clip(total, -1.0, 1.0), 3)
