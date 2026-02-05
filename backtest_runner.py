@@ -128,7 +128,6 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
         
         engine = BacktestEngine({
             "nikkei_futures_daily": window,
-            "nikkei_index_daily": window, # Use futures data as proxy for index for HV calc
             "vix_daily": vix_window
         })
         scores = engine.analyze()
