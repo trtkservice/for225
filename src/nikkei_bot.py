@@ -99,6 +99,49 @@ class TechnicalAnalysis:
     """Statistical Calculation Library."""
     
     @staticmethod
+    def detect_patterns(df: pd.DataFrame) -> dict:
+        """Detect Candlestick Patterns (Pinbar, Engulfing)."""
+        if len(df) < 2: return {}
+        
+        curr = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        open_p, close_p = curr['Open'], curr['Close']
+        high_p, low_p = curr['High'], curr['Low']
+        
+        body = abs(close_p - open_p)
+        total_len = high_p - low_p
+        if total_len == 0: return {}
+        
+        # 1. Pin Bar (Hammer / Shooting Star)
+        # Lower Wick > 2 * Body (Bullish)
+        # Upper Wick > 2 * Body (Bearish)
+        lower_wick = min(open_p, close_p) - low_p
+        upper_wick = high_p - max(open_p, close_p)
+        
+        is_bullish_pin = (lower_wick > 2 * body) and (upper_wick < body)
+        is_bearish_pin = (upper_wick > 2 * body) and (lower_wick < body)
+        
+        # 2. Engulfing (Original simple logic)
+        # Bullish: Prev Red, Curr Green, Curr Open < Prev Close, Curr Close > Prev Open
+        is_bullish_eng = (prev['Close'] < prev['Open']) and \
+                         (close_p > open_p) and \
+                         (open_p <= prev['Close']) and \
+                         (close_p >= prev['Open'])
+                         
+        is_bearish_eng = (prev['Close'] > prev['Open']) and \
+                         (close_p < open_p) and \
+                         (open_p >= prev['Close']) and \
+                         (close_p <= prev['Open'])
+
+        return {
+            "bullish_pinbar": is_bullish_pin,
+            "bearish_pinbar": is_bearish_pin,
+            "bullish_engulfing": is_bullish_eng,
+            "bearish_engulfing": is_bearish_eng
+        }
+
+    @staticmethod
     def calc_rsi(series, period=14):
         delta = series.diff()
         gain = (delta.where(delta > 0, 0))
@@ -212,7 +255,33 @@ class AntigravityEngine:
                 (self.scores["momentum"] * Config.WEIGHT_MOMENTUM) + \
                 (self.scores["volatility"] * Config.WEIGHT_VOLATILITY)
         
-        self.scores["total"] = round(total, 3)
+        # --- Candlestick Pattern Filter ---
+        nk_df = self.data.get("nikkei_futures_daily")
+        pattern_mult = 1.0
+        
+        if nk_df is not None and len(nk_df) > 2:
+            patterns = TechnicalAnalysis.detect_patterns(nk_df)
+            
+            # 1. Bullish Patterns
+            if patterns.get("bullish_pinbar") or patterns.get("bullish_engulfing"):
+                if total > 0: 
+                    pattern_mult = 1.3 # Boost Long
+                    print("   🕯️ Bullish Pattern Detected! Boosting Long.")
+                elif total < 0:
+                    pattern_mult = 0.1 # Negate Short (Counter-trend risk)
+                    print("   🕯️ Bullish Pattern vs Short Signal -> Canceled.")
+
+            # 2. Bearish Patterns
+            if patterns.get("bearish_pinbar") or patterns.get("bearish_engulfing"):
+                if total < 0:
+                    pattern_mult = 1.3 # Boost Short
+                    print("   🕯️ Bearish Pattern Detected! Boosting Short.")
+                elif total > 0:
+                    pattern_mult = 0.1 # Negate Long (Top reversal risk)
+                    print("   🕯️ Bearish Pattern vs Long Signal -> Canceled.")
+        
+        total *= pattern_mult
+        self.scores["total"] = round(np.clip(total, -1.0, 1.0), 3)
         
         if total > 0.3: self.scores["signal"] = "LONG"
         elif total < -0.3: self.scores["signal"] = "SHORT"
