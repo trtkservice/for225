@@ -161,6 +161,52 @@ class TechnicalAnalysis:
         return macd, signal_line, macd - signal_line
 
     @staticmethod
+    def detect_divergence(df: pd.DataFrame, period=14, window=10) -> dict:
+        """Detect RSI Divergence (Reversal Signal)."""
+        if len(df) < window + 2: return {}
+        
+        close = df['Close']
+        rsi = TechnicalAnalysis.calc_rsi(close, period)
+        
+        # Lookback for peaks in the last 'window' days (excluding today)
+        # Today
+        curr_price = close.iloc[-1]
+        curr_rsi = rsi.iloc[-1]
+        
+        # Previous relevant peak/trough logic is complex to perfect simply.
+        # We use a simplified approach: Compare today with the Min/Max of the window
+        # AND check if RSI disagrees.
+        
+        # Window range (e.g., 5 to 1 days ago)
+        past_window = df.iloc[-(window+1):-1]
+        past_rsi_window = rsi.iloc[-(window+1):-1]
+        
+        # 1. Bearish Divergence (Price Higher High, RSI Lower High)
+        max_price_idx = past_window['High'].idxmax()
+        max_price = past_window['High'].max()
+        max_rsi_at_peak = rsi[max_price_idx] # RSI at that price peak
+        
+        is_bearish_div = False
+        if curr_price > max_price: # Price made new high
+            if curr_rsi < max_rsi_at_peak: # RSI is lower than it was at previous peak
+                is_bearish_div = True
+                
+        # 2. Bullish Divergence (Price Lower Low, RSI Higher Low)
+        min_price_idx = past_window['Low'].idxmin()
+        min_price = past_window['Low'].min()
+        min_rsi_at_peak = rsi[min_price_idx]
+        
+        is_bullish_div = False
+        if curr_price < min_price: # Price made new low
+            if curr_rsi > min_rsi_at_peak: # RSI is higher than at previous low
+                is_bullish_div = True
+                
+        return {
+            "bullish_divergence": is_bullish_div,
+            "bearish_divergence": is_bearish_div
+        }
+
+    @staticmethod
     def calc_atr(hist, period=14):
         high_low = hist['High'] - hist['Low']
         high_close = (hist['High'] - hist['Close'].shift()).abs()
@@ -277,6 +323,16 @@ class AntigravityEngine:
                 elif total > 0:
                     pattern_mult = 0.1 # Negate Long (Top reversal risk)
         
+        # --- Divergence Filter (Stronger Reversal Warning) ---
+        divs = TechnicalAnalysis.detect_divergence(nk_df)
+        if divs.get("bearish_divergence") and total > 0:
+            pattern_mult = 0.0 # FORCE WAIT (High risk of top)
+            # print("   ⚠️ Bearish Divergence -> Long Canceled")
+            
+        if divs.get("bullish_divergence") and total < 0:
+            pattern_mult = 0.0 # FORCE WAIT (High risk of bottom)
+            # print("   ⚠️ Bullish Divergence -> Short Canceled")
+
         total *= pattern_mult
         self.scores["total"] = round(np.clip(total, -1.0, 1.0), 3)
         
