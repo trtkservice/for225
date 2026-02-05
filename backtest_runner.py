@@ -13,6 +13,7 @@ from src.nikkei_bot import Config, TechnicalAnalysis, AntigravityEngine, round_t
 # --- Backtest Configuration ---
 INITIAL_CAPITAL = 100000
 START_DATE = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
+BACKTEST_LOTS = 1
 
 # --- Optimization Settings ---
 STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2]
@@ -111,7 +112,7 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 
                 # Calc PnL (Fixed Lot - Single Interest)
                 diff = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
-                bn = (diff * Config.CONTRACT_MULTIPLIER) - Config.COST_PER_TRADE
+                bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (Config.COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
                 trades.append(bn)
                 position = None

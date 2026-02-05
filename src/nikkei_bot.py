@@ -27,6 +27,7 @@ class Config:
     CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
     TICK_SIZE = 5             # Minimum fluctuation
     COST_PER_TRADE = 50       # Estimated commission + slippage per trade
+    LOTS = 1                  # Number of Contracts (Leverage)
     
     # Strategy Parameters
     SHADOW_CAPITAL = 100000
@@ -416,8 +417,8 @@ class PortfolioManager:
                 
             if exit_price is not None:
                 p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER
-                net_pnl = gross_pnl - Config.COST_PER_TRADE
+                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * Config.LOTS
+                net_pnl = gross_pnl - (Config.COST_PER_TRADE * Config.LOTS)
                 
                 pf["capital"] += net_pnl
                 pf["trades"].append({
