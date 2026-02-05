@@ -498,10 +498,10 @@ class NikkeiBot:
         self.advisor = GeminiAdvisor(os.environ.get("GEMINI_API_KEY"))
 
     def run(self):
-        # --- Guard: Skip execution until Feb 5th, 2026 (Launch Prep Phase) ---
+        # --- Guard: Skip execution until Feb 6th, 2026 (Launch Prep Phase) ---
         now_jst = datetime.now(Config.JST)
-        # Skip if today is 2/4 or 2/5 (or before)
-        if now_jst.date() <= datetime(2026, 2, 5).date():
+        # Skip if today is 2/6 (or before)
+        if now_jst.date() <= datetime(2026, 2, 6).date():
             print(f"🚫 Skipping execution for today ({now_jst.strftime('%Y-%m-%d')}). Launch Prep in progress.")
             return
         # ------------------------------------------------------------
