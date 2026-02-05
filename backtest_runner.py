@@ -175,10 +175,15 @@ def run_grid_search():
     nikkei['ATR'] = TechnicalAnalysis.calc_atr(nikkei)
     vix = vix['Close'].reindex(nikkei.index).fillna(20.0).to_frame(name='Close')
 
+    today = datetime.now()
+    start_dt = datetime.strptime(START_DATE, '%Y-%m-%d')
+    months = (today - start_dt).days / 30.417
+    
     print(f"🔎 Comparative Search: SWING vs DAY TRADE (RiskGate: {Config.GAP_THRESHOLD*100:.1f}% - DISABLED)")
-    print("="*90)
-    print(f"{'STOP':<5}|{'TGT':<5}|| {'SWING RET':<10} {'(Win%)':<8}|| {'DAY RET':<10} {'(Win%)':<8}")
-    print("-" * 90)
+    print(f"   Period: {months:.1f} months")
+    print("="*105)
+    print(f"STOP |TGT  || SWING RET  (Win%) [Avg/Mo] || DAY RET    (Win%) [Avg/Mo]")
+    print("-" * 105)
     
     for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
         if t <= s: continue 
@@ -187,23 +192,23 @@ def run_grid_search():
         cap_s, trds_s = run_simulation(nikkei, vix, s, t, mode="SWING")
         ret_s = (cap_s - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         win_s = (len([x for x in trds_s if x > 0])/len(trds_s)*100) if trds_s else 0
+        pnl_s = cap_s - INITIAL_CAPITAL
+        avg_s = pnl_s / months
         
         # Run DAY
         cap_d, trds_d = run_simulation(nikkei, vix, s, t, mode="DAY")
         ret_d = (cap_d - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         win_d = (len([x for x in trds_d if x > 0])/len(trds_d)*100) if trds_d else 0
+        pnl_d = cap_d - INITIAL_CAPITAL
+        avg_d = pnl_d / months
         
         # Highlight winner
         winner = "SWING" if ret_s > ret_d else "DAY  "
         if ret_s < 0 and ret_d < 0: winner = "LOSE"
         
-        # Only print promising ones or current setting
-        if (s==0.6 and t==1.2):
-             print(f"👉{s:<4}|{t:<4}|| {ret_s:>+8.1f}% ({win_s:>4.1f}%)|| {ret_d:>+8.1f}% ({win_d:>4.1f}%) < {winner}")
-        elif ret_s > 40 or ret_d > 40:
-             print(f"  {s:<4}|{t:<4}|| {ret_s:>+8.1f}% ({win_s:>4.1f}%)|| {ret_d:>+8.1f}% ({win_d:>4.1f}%)")
-
-    print("="*90)
+        # Print results
+        print(f"  {s:<4}|{t:<4}|| {ret_s:>+8.1f}% ({win_s:>4.1f}%) [{avg_s:>+6.0f}] || {ret_d:>+8.1f}% ({win_d:>4.1f}%) [{avg_d:>+6.0f}] {winner}")
+    print("="*105)
 
 if __name__ == "__main__":
     run_grid_search()
