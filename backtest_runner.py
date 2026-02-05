@@ -86,13 +86,58 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 if open_p <= stop: exit_price = open_p; hit_stop = True
                 elif open_p >= target: exit_price = open_p; hit_target = True
                 elif low_p <= stop: exit_price = stop; hit_stop = True
-                elif high_p >= target: exit_price = target; hit_target = True
+                elif high_p >= target: exit_price = target; hit_target = True # Original target check
             else: # SHORT
                 if open_p >= stop: exit_price = open_p; hit_stop = True
-                elif open_p <= target: exit_price = open_p; hit_target = True
+                elif open_p <= target: exit_price = open_p; hit_target = True # Original target check
                 elif high_p >= stop: exit_price = stop; hit_stop = True
-                elif low_p <= target: exit_price = target; hit_target = True
+                elif low_p <= target: exit_price = target; hit_target = True # Original target check
             
+            # --- Trailing Stop Logic ---
+            entry_atr = position.get('entry_atr', 400.0)
+            
+            if position['type'] == 'LONG':
+                # Update Highest High
+                if high_p > position.get('highest_high', entry_p):
+                    position['highest_high'] = high_p
+                
+                # Calculate Profit in ATR units
+                max_profit_atr = (position['highest_high'] - entry_p) / entry_atr
+                
+                # Trail Stop
+                if max_profit_atr >= 1.0:
+                    # Move stop to (Highest Milestone - 1.0 ATR)
+                    new_stop = entry_p + (int(max_profit_atr) - 1.0) * entry_atr
+                    if new_stop > position['stop']:
+                        position['stop'] = new_stop
+                
+                # Check Stop Hit
+                if low_p <= position['stop'] and not hit_stop: 
+                    exit_price = position['stop']
+                    hit_stop = True
+
+            elif position['type'] == 'SHORT':
+                # Update Lowest Low
+                if low_p < position.get('lowest_low', entry_p):
+                    position['lowest_low'] = low_p
+                    
+                # Calculate Profit in ATR units
+                max_profit_atr = (entry_p - position['lowest_low']) / entry_atr
+                
+                # Trail Stop
+                if max_profit_atr >= 1.0:
+                    new_stop = entry_p - (int(max_profit_atr) - 1.0) * entry_atr
+                    if new_stop < position['stop']:
+                        position['stop'] = new_stop
+                        
+                # Check Stop Hit
+                if high_p >= position['stop'] and not hit_stop:
+                    exit_price = position['stop']
+                    hit_stop = True
+            
+            # Fixed Target Removed (Trailing only)
+            hit_target = False
+
             # Forced Exit Logic
             is_timestop = False
             if mode == "DAY":
@@ -156,7 +201,10 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             'entry': entry_price,
             'stop': entry_price - s_dist if signal == "LONG" else entry_price + s_dist,
             'target': entry_price + t_dist if signal == "LONG" else entry_price - t_dist,
-            'days': 0
+            'days': 0,
+            'highest_high': entry_price,
+            'lowest_low': entry_price,
+            'entry_atr': atr
         }
         
     return capital, trades
