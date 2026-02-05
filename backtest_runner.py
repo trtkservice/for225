@@ -12,7 +12,7 @@ from src.nikkei_bot import Config, TechnicalAnalysis, AntigravityEngine, round_t
 
 # --- Backtest Configuration ---
 INITIAL_CAPITAL = 100000
-START_DATE = (datetime.now() - timedelta(days=3*365)).strftime('%Y-%m-%d')
+START_DATE = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
 
 # --- Optimization Settings ---
 STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2]
