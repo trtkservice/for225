@@ -77,22 +77,31 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             # OHLC
             open_p, high_p, low_p, close_p = today['Open'], today['High'], today['Low'], today['Close']
             
-            exit_price = None
-            
-            # Intraday Check
+            # Check Stop / Target
             hit_stop = False
             hit_target = False
+            exit_price = None
             
-            if p_type == "LONG":
+            if position['type'] == 'LONG':
+                # Conservative Open check: Did we open below stop?
                 if open_p <= stop: exit_price = open_p; hit_stop = True
                 elif open_p >= target: exit_price = open_p; hit_target = True
-                elif low_p <= stop: exit_price = stop; hit_stop = True
+                
+                # Strict Stop Check (Accounting for Spread/Ask price)
+                # We get stopped out if the BID price hits stop. 
+                # Assuming Low is Bid. But in panic, slippage occurs.
+                elif low_p - SPREAD <= stop: exit_price = stop; hit_stop = True
                 elif high_p >= target: exit_price = target; hit_target = True
             else: # SHORT
                 if open_p >= stop: exit_price = open_p; hit_stop = True
                 elif open_p <= target: exit_price = open_p; hit_target = True
-                elif high_p >= stop: exit_price = stop; hit_stop = True
+                
+                # Strict Stop Check
+                # Stopped if ASK price hits stop. High is Bid, Ask is High + Spread.
+                elif high_p + SPREAD >= stop: exit_price = stop; hit_stop = True
                 elif low_p <= target: exit_price = target; hit_target = True
+                
+            # --- Trailing Stop Logic Removed (Reverted to Fixed Logic in previous step) ---
             
             # Forced Exit Logic
             is_timestop = False
@@ -112,7 +121,7 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 
                 # Calc PnL (Fixed Lot - Single Interest)
                 diff = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
-                bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (Config.COST_PER_TRADE * BACKTEST_LOTS)
+                bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
                 trades.append(bn)
                 position = None
