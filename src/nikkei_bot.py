@@ -318,53 +318,11 @@ class PortfolioManager:
             direction = pos["direction"]
             entry = pos["entry_price"]
             stop = pos["stop"]
-            # target = pos["target"] # Target removed for Trailing Strategy
+            target = pos["target"]
             
-            # --- Load/Init Trailing Data ---
-            highest = pos.get("highest_high", entry)
-            lowest = pos.get("lowest_low", entry)
-            entry_atr = pos.get("entry_atr", atr) # Fallback to current ATR if missing
-            
-            # --- Checks & Trailing Logic ---
-            updated_stop = stop
-            hit_stop = False
-            
-            if direction == "LONG":
-                # Update High
-                if high > highest: highest = high
-                
-                # Trail Stop Logic
-                max_profit_atr = (highest - entry) / entry_atr
-                if max_profit_atr >= 1.0:
-                     new_stop = entry + (int(max_profit_atr) - 1.0) * entry_atr
-                     new_stop = round_to_tick(new_stop)
-                     if new_stop > stop:
-                         updated_stop = new_stop
-                         print(f"[{strat_conf['name']}] 📈 Trailing Stop Updated: {stop} -> {updated_stop}")
-
-                # Stop Check
-                if low <= updated_stop: hit_stop = True
-                
-            elif direction == "SHORT":
-                # Update Low
-                if low < lowest: lowest = low
-                
-                # Trail Stop Logic
-                max_profit_atr = (entry - lowest) / entry_atr
-                if max_profit_atr >= 1.0:
-                    new_stop = entry - (int(max_profit_atr) - 1.0) * entry_atr
-                    new_stop = round_to_tick(new_stop)
-                    if new_stop < stop:
-                        updated_stop = new_stop
-                        print(f"[{strat_conf['name']}] 📉 Trailing Stop Updated: {stop} -> {updated_stop}")
-                
-                # Stop Check
-                if high >= updated_stop: hit_stop = True
-
-            # Save state
-            pos["highest_high"] = highest
-            pos["lowest_low"] = lowest
-            pos["stop"] = updated_stop
+            # Checks
+            hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
+            hit_target = (high >= target) if direction == "LONG" else (low <= target)
             
             # Time Expiration
             try:
@@ -381,8 +339,12 @@ class PortfolioManager:
             reason = None
             
             if hit_stop:
-                exit_price = updated_stop
-                reason = "STOP (Trailing)"
+                exit_price = stop
+                reason = "STOP"
+                if hit_target: pass
+            elif hit_target:
+                exit_price = target
+                reason = "TARGET"
             elif time_stop:
                 exit_price = round_to_tick(current_price_raw)
                 reason = "TIME_STOP"
@@ -407,7 +369,7 @@ class PortfolioManager:
                 pf["position"] = None
                 print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+}")
             else:
-                print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held} (Profit Peak: {highest if direction=='LONG' else lowest})")
+                print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held}")
             
             self.data["portfolios"][strat_key] = pf
 
@@ -440,10 +402,7 @@ class PortfolioManager:
                 "entry_price": int(entry_price),
                 "stop": int(stop_price),
                 "target": int(target_price),
-                "strategy": strat_key,
-                "highest_high": int(entry_price),
-                "lowest_low": int(entry_price),
-                "entry_atr": float(safe_atr)
+                "strategy": strat_key
             }
             self.data["portfolios"][strat_key] = pf
             print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Stop:{stop_price} Target:{target_price})")
