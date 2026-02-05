@@ -98,16 +98,16 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             
             if position['type'] == 'LONG':
                 # Update Highest High
-                if high_p > position.get('highest_high', entry_p):
+                if high_p > position.get('highest_high', position['entry']):
                     position['highest_high'] = high_p
                 
                 # Calculate Profit in ATR units
-                max_profit_atr = (position['highest_high'] - entry_p) / entry_atr
+                max_profit_atr = (position['highest_high'] - position['entry']) / entry_atr
                 
                 # Trail Stop
                 if max_profit_atr >= 1.0:
                     # Move stop to (Highest Milestone - 1.0 ATR)
-                    new_stop = entry_p + (int(max_profit_atr) - 1.0) * entry_atr
+                    new_stop = position['entry'] + (int(max_profit_atr) - 1.0) * entry_atr
                     if new_stop > position['stop']:
                         position['stop'] = new_stop
                 
@@ -118,15 +118,15 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
 
             elif position['type'] == 'SHORT':
                 # Update Lowest Low
-                if low_p < position.get('lowest_low', entry_p):
+                if low_p < position.get('lowest_low', position['entry']):
                     position['lowest_low'] = low_p
                     
                 # Calculate Profit in ATR units
-                max_profit_atr = (entry_p - position['lowest_low']) / entry_atr
+                max_profit_atr = (position['entry'] - position['lowest_low']) / entry_atr
                 
                 # Trail Stop
                 if max_profit_atr >= 1.0:
-                    new_stop = entry_p - (int(max_profit_atr) - 1.0) * entry_atr
+                    new_stop = position['entry'] - (int(max_profit_atr) - 1.0) * entry_atr
                     if new_stop < position['stop']:
                         position['stop'] = new_stop
                         
