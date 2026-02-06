@@ -68,9 +68,9 @@ class Config:
 
 # --- Helper Functions ---
 
-def round_to_tick(price: float) -> int:
-    """Round price to the nearest tick size."""
-    if pd.isna(price): return 0
+def round_to_tick(price):
+    """Round price to nearest tick size (5 JPY). Returns None if invalid."""
+    if price is None or pd.isna(price): return None
     return int(round(price / Config.TICK_SIZE) * Config.TICK_SIZE)
 
 # --- Components ---
@@ -341,7 +341,7 @@ class LiLFlexxEngine:
         elif total < -0.3: self.scores["signal"] = "SHORT"
         else: self.scores["signal"] = "WAIT"
         
-        self.scores["strength"] = "STRONG" if abs(total) > 0.6 else "MEDIUM"
+        self.scores["strength"] = "STRONG" if abs(total) > 0.6 else "MEDIUM" if abs(total) > 0.3 else "WEAK"
 
 class GeminiAdvisor:
     """Interfaces with Google Gemini AI."""
@@ -400,9 +400,10 @@ class GeminiAdvisor:
                     "approved": data.get("approved", True),
                     "reasoning": data.get("reasoning", "")
                 }
-        except:
+        except Exception as e:
+            print(f"⚠️ JSON Parse Error: {e}")
             pass
-        return default
+        return {"direction": "WAIT", "approved": False, "reasoning": "AI Response Parse Failed"}
 
 class PortfolioManager:
     """Manages Multiple Shadow Portfolios (A/B Testing)."""
@@ -467,9 +468,12 @@ class PortfolioManager:
             except:
                 days_held = 99
             
-            # Day Trade Logic: Close if we are at the end of the day (days_held >= 0 check is enough if running daily)
-            # Actually, if we run this script AT CLOSE (15:15 or 06:00), we close DAY positions now.
-            is_day_close = (mode == "DAY") 
+            # Day Trade Logic: Close if we are past 15:00 JST on the entry day, or if days_held > 0
+            # This prevents immediate close if run at 08:00 JST
+            current_hour = datetime.now(Config.JST).hour
+            is_market_closed = (current_hour >= 15 or current_hour < 6)
+            
+            is_day_close = (mode == "DAY" and (days_held > 0 or is_market_closed)) 
             is_swing_expire = (mode == "SWING" and days_held >= Config.MAX_HOLD_DAYS)
             
             time_stop = is_day_close or is_swing_expire
