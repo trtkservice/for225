@@ -84,17 +84,29 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             hit_target = False
             exit_price = None
             
+            # DEBUG: Print details for first 10 trades to diagnose logic
+            is_debug = len(trades) < 10
+            if is_debug:
+                print(f"[{current_date.date()}] {p_type} Entry: {position['entry']} | Stop: {stop:.1f} | Tgt: {target:.1f} | OHLC: {open_p}/{high_p}/{low_p}/{close_p}")
+
             if p_type == "LONG":
-                if low_p <= stop: exit_price = stop; hit_stop = True
-                elif high_p >= target: exit_price = target; hit_target = True
-                # Strict Stop Check (Spread)
-                # Low is Bid. Bid <= Stop -> HIT
+                if low_p <= stop: 
+                    exit_price = stop; hit_stop = True
+                    if is_debug: print(f"  -> STOP HIT (Low {low_p} <= Stop {stop})")
+                elif high_p >= target: 
+                    exit_price = target; hit_target = True
+                    if is_debug: print(f"  -> TARGET HIT (High {high_p} >= Tgt {target})")
                 
             elif p_type == "SHORT":
-                if high_p >= stop: exit_price = stop; hit_stop = True
-                elif low_p <= target: exit_price = target; hit_target = True
-                # Strict Check: Ask hits stop. Ask = High + Spread
-                elif high_p + SPREAD >= stop: exit_price = stop; hit_stop = True
+                if high_p >= stop: 
+                    exit_price = stop; hit_stop = True
+                    if is_debug: print(f"  -> STOP HIT (High {high_p} >= Stop {stop})")
+                elif low_p <= target: 
+                    exit_price = target; hit_target = True
+                    if is_debug: print(f"  -> TARGET HIT (Low {low_p} <= Tgt {target})")
+                elif high_p + SPREAD >= stop: 
+                    exit_price = stop; hit_stop = True
+                    if is_debug: print(f"  -> SPREAD STOP HIT (Ask {high_p+SPREAD} >= Stop {stop})")
                 
             # Forced Exit Logic
             is_timestop = False
@@ -103,16 +115,19 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 if not hit_stop and not hit_target:
                     exit_price = close_p
                     is_timestop = True
+                    if is_debug: print(f"  -> DAY CLOSE Exit at {close_p}")
             elif mode == "DOTEN":
                 # DOTEN: Only exit if Signal Reverses (handled below) or Hit Stop
                 position['days'] += 1
                 if position['days'] >= 20: 
                     is_timestop = True
+                    if is_debug: print(f"  -> DOTEN EXPIRE Exit at {close_p}")
             else:
                 # SWING
                 position['days'] += 1
                 if position['days'] >= Config.MAX_HOLD_DAYS:
                     is_timestop = True
+                    if is_debug: print(f"  -> SWING EXPIRE Exit at {close_p}")
 
             if hit_stop or hit_target or is_timestop:
                 if not exit_price: exit_price = close_p 
@@ -122,6 +137,9 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
                 trades.append({'date': current_date, 'pnl': bn})
+                
+                if is_debug: print(f"  -> RESULT: PnL {bn:.0f} | Cap {capital:.0f}")
+                
                 position = None
                 continue
 
