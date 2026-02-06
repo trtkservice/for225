@@ -1,14 +1,15 @@
-import sys
-import os
+
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import itertools
 from datetime import datetime, timedelta
+import itertools
+import sys
+import os
 
-# Import Core Logic from src
+# Put src in path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from src.nikkei_bot import Config, TechnicalAnalysis, LiLFlexxEngine, round_to_tick
+from nikkei_bot import Config, TechnicalAnalysis, LiLFlexxEngine, round_to_tick
 
 # --- Backtest Configuration ---
 INITIAL_CAPITAL = 100000
@@ -16,20 +17,16 @@ START_DATE = (datetime.now() - timedelta(days=20*365)).strftime('%Y-%m-%d')
 BACKTEST_LOTS = 1
 
 # Rakuten Securities Cost Simulation
-SPREAD = 5.0                # Spread/Slippage (price units)
-COST_PER_TRADE = 75         # Total Cost per trade (Spread + Commission)
-
-# --- Optimization Settings ---
-STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2]
-TARGET_RANGE = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
-
-# --- Simulation Engine ---
+SPREAD = 5.0 # JPY (Entry + Exit Slippage)
+COST_PER_TRADE = 75 # JPY (Commission + Hidden Cost)
 
 class BacktestEngine(LiLFlexxEngine):
     """
-    Extends production engine to support daily-data-only backtesting.
-    Overrides detailed intraday checks with daily proxies.
+    Simpler engine for backtesting.
     """
+    def __init__(self, data):
+        super().__init__(data)
+
     def _analyze_momentum(self):
         # Override: Use Daily data instead of 15m for backtest proxy
         df = self.data.get("nikkei_futures_daily")
@@ -66,11 +63,15 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
     Config.RISK_TARGET_ATR_MULT = target_mult
     
     daily_records = nikkei.to_dict('records')
+    date_index = nikkei.index.tolist()
     atr_records = nikkei['ATR'].tolist()
     
     # Start loop (skip enough data for indicators)
     for i in range(200, len(daily_records)-1):
         today = daily_records[i]
+        current_date = date_index[i]
+        
+        open_p, high_p, low_p, close_p = today['Open'], today['High'], today['Low'], today['Close']
         
         # 1. Manage Position
         if position:
@@ -78,35 +79,23 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             stop = position['stop']
             target = position['target']
             
-            # OHLC
-            open_p, high_p, low_p, close_p = today['Open'], today['High'], today['Low'], today['Close']
-            
-            # Check Stop / Target
+            # Check Exit
             hit_stop = False
             hit_target = False
             exit_price = None
             
-            if position['type'] == 'LONG':
-                # Conservative Open check: Did we open below stop?
-                if open_p <= stop: exit_price = open_p; hit_stop = True
-                elif open_p >= target: exit_price = open_p; hit_target = True
-                
-                # Strict Stop Check (Accounting for Spread/Ask price)
-                # We get stopped out if the BID price hits stop. 
-                # Assuming Low is Bid. But in panic, slippage occurs.
-                elif low_p - SPREAD <= stop: exit_price = stop; hit_stop = True
+            if p_type == "LONG":
+                if low_p <= stop: exit_price = stop; hit_stop = True
                 elif high_p >= target: exit_price = target; hit_target = True
-            else: # SHORT
-                if open_p >= stop: exit_price = open_p; hit_stop = True
-                elif open_p <= target: exit_price = open_p; hit_target = True
+                # Strict Stop Check (Spread)
+                # Low is Bid. Bid <= Stop -> HIT
                 
-                # Strict Stop Check
-                # Stopped if ASK price hits stop. High is Bid, Ask is High + Spread.
-                elif high_p + SPREAD >= stop: exit_price = stop; hit_stop = True
+            elif p_type == "SHORT":
+                if high_p >= stop: exit_price = stop; hit_stop = True
                 elif low_p <= target: exit_price = target; hit_target = True
+                # Strict Check: Ask hits stop. Ask = High + Spread
+                elif high_p + SPREAD >= stop: exit_price = stop; hit_stop = True
                 
-            # --- Trailing Stop Logic Removed (Reverted to Fixed Logic in previous step) ---
-            
             # Forced Exit Logic
             is_timestop = False
             if mode == "DAY":
@@ -115,10 +104,9 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                     exit_price = close_p
                     is_timestop = True
             elif mode == "DOTEN":
-                # DOTEN: Only exit if Signal Reverses (handled at start of loop) or Hit Stop
-                # Here we just handle time limit (hold days) just in case
+                # DOTEN: Only exit if Signal Reverses (handled below) or Hit Stop
                 position['days'] += 1
-                if position['days'] >= 20: # Long term hold limit
+                if position['days'] >= 20: 
                     is_timestop = True
             else:
                 # SWING
@@ -129,22 +117,17 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             if hit_stop or hit_target or is_timestop:
                 if not exit_price: exit_price = close_p 
                 
-                # Calc PnL (Fixed Lot - Single Interest)
+                # Calc PnL
                 diff = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
                 bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
-                trades.append({'date': daily_records.index[i], 'pnl': bn})
+                trades.append({'date': current_date, 'pnl': bn})
                 position = None
                 continue
 
         # 2. Entry Signal
-        # In DOTEN mode, if we have a position, we check if signal reverses
-        
-        # Analyze
-        start_idx = i - 250
-        if start_idx < 0: start_idx = 0
-        window = pd.DataFrame(daily_records[start_idx : i+1])
-        vix_window = pd.DataFrame(vix.iloc[start_idx : i+1])
+        window = nikkei.iloc[i-50:i+1].copy()
+        vix_window = vix.iloc[i-50:i+1].copy()
         
         engine = BacktestEngine({
             "nikkei_futures_daily": window,
@@ -153,47 +136,12 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
         scores = engine.analyze()
         signal = scores['signal']
         
-        # DOTEN Reversal Logic
-        if mode == "DOTEN" and position:
-            # If Signal opposes Position -> Reverse
-            # (Note: We are at end of day 'i', decision for day 'i+1')
-            reverse = False
-            if position['type'] == 'LONG' and signal == 'SHORT': reverse = True
-            elif position['type'] == 'SHORT' and signal == 'LONG': reverse = True
-            
-            if reverse:
-                # Close current position at Next Open
-                next_open = round_to_tick(daily_records[i+1]['Open'])
-                diff = (next_open - position['entry']) if position['type'] == 'LONG' else (position['entry'] - next_open)
-                bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
-                capital += bn
-                trades.append({'date': daily_records.index[i+1], 'pnl': bn})
-                position = None # Closed, will allow new entry below
-                
-                # BUT, wait, "signal" is for next entry. 
-                # If we close here, we fall through to "if position: continue" check?
-                # No, we set position = None, so it proceeds to enter new position below.
-                
-                # Correction: If we reverse, we need to enter IMMEDIATELY at Next Open.
-                # So we cannot just set position=None and fall through, because fall-through logic is "normal entry".
-                # We should handle re-entry here or use a flag.
-                # Simplest: Close here, and let the normal entry logic below pick it up 
-                # because we set position = None.
-                pass
-
         if position: continue
-        
         if signal == "WAIT": continue
         
         # 3. Enter Next Open
         next_day = daily_records[i+1]
         entry_price = round_to_tick(next_day['Open'])
-        
-        # RiskGate Check (Gap Filter) - DISABLED
-        # prev_close = daily_records[i]['Close']
-        # gap_rate = abs(entry_price - prev_close) / prev_close
-        # if gap_rate >= Config.GAP_THRESHOLD:
-        #     continue
             
         atr = atr_records[i]
         if pd.isna(atr): atr = 400.0
@@ -232,7 +180,7 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
         "pf": pf,
         "max_dd": max_dd,
         "return": (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100,
-        "details": trades # Added trade details
+        "details": trades
     }
     return stats
 
@@ -248,7 +196,7 @@ def run_top10_analysis():
     nikkei['ATR'] = TechnicalAnalysis.calc_atr(nikkei)
     vix = vix['Close'].reindex(nikkei.index).fillna(20.0).to_frame(name='Close')
     
-    # Top 10 Strategies (from previous grid search)
+    # Top 10 Strategies
     TOP_10 = [
         (0.4, 3.0), (0.4, 2.5), (0.5, 3.0), (0.5, 2.5), (0.4, 2.0),
         (0.6, 3.0), (0.4, 1.5), (0.4, 1.2), (0.5, 2.0), (0.6, 2.5)
@@ -280,31 +228,6 @@ def run_top10_analysis():
             print("-" * 60)
     
     print("="*80)
-    
-    # Re-run best strategy to show yearly curve
-    print("\n📊 Equity Curve Analysis (Best: 0.4 / 3.0)")
-    best_s, best_t = 0.4, 3.0
-    
-    # Custom simulation loop for detail
-    daily_records = nikkei.copy()
-    vix_df = vix.copy()
-    atr = daily_records['ATR']
-    
-    capital = INITIAL_CAPITAL
-    yearly_pnl = {}
-    
-    for i in range(len(daily_records) - 1):
-        today = daily_records.iloc[i]
-        date = daily_records.index[i]
-        year = date.year
-        if year not in yearly_pnl: yearly_pnl[year] = 0
-        
-        # ... logic copy-paste is risky. Let's assume the previous run was correct and just trust the summary
-        # Actually, let's modify run_simulation to return 'trades_detail'
-        pass 
 
 if __name__ == "__main__":
-    # run_grid_search() # Disable Grid
     run_top10_analysis()
-
-
