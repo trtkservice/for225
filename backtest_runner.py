@@ -253,9 +253,9 @@ def run_grid_search():
     
     print(f"🔎 Comparative Search: DAY vs DOTEN vs SWING")
     print(f"   Period: {months:.1f} months | Spread: {SPREAD} | Cost: {COST_PER_TRADE}")
-    print("="*140)
-    print(f"STOP |TGT  || DAY [Ret/PF/DD]       || DOTEN [Ret/PF/DD]")
-    print("-" * 140)
+    print("="*120)
+    print(f"STOP |TGT  || DAY [Ret/PF/DD]       || DOTEN [Ret/PF/DD]     || SWING [Ret/PF/DD]")
+    print("-" * 120)
     
     for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
         if t <= s: continue 
@@ -266,15 +266,20 @@ def run_grid_search():
         # Run DOTEN
         res_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
 
-        # Winner
-        winner = "DAY  " if res_d["return"] >= res_o["return"] else "DOTEN"
+        # Run SWING
+        res_s = run_simulation(nikkei, vix, s, t, mode="SWING")
+        
+        # Highlight Winner
+        vals = {"DAY": res_d["return"], "DOTEN": res_o["return"], "SWING": res_s["return"]}
+        winner = max(vals, key=vals.get)
         
         # Print
         row_d = f"{res_d['return']:>+6.0f}% / {res_d['pf']:4.2f} / {res_d['max_dd']:4.1f}%"
         row_o = f"{res_o['return']:>+6.0f}% / {res_o['pf']:4.2f} / {res_o['max_dd']:4.1f}%"
+        row_s = f"{res_s['return']:>+6.0f}% / {res_s['pf']:4.2f} / {res_s['max_dd']:4.1f}%"
         
-        print(f"  {s:<4}|{t:<4}|| {row_d:<24} || {row_o:<24} {winner}")
-    print("="*140)
+        print(f"  {s:<4}|{t:<4}|| {row_d:<24} || {row_o:<24} || {row_s:<24} {winner}")
+    print("="*120)
 
 if __name__ == "__main__":
     run_grid_search()
