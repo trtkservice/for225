@@ -15,6 +15,10 @@ INITIAL_CAPITAL = 100000
 START_DATE = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
 BACKTEST_LOTS = 1
 
+# Rakuten Securities Cost Simulation
+SPREAD = 5.0                # Spread/Slippage (price units)
+COST_PER_TRADE = 75         # Total Cost per trade (Spread + Commission)
+
 # --- Optimization Settings ---
 STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2]
 TARGET_RANGE = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
@@ -205,7 +209,30 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
             'days': 0
         }
         
-    return capital, trades
+    # --- Calc Stats ---
+    total_profit = sum([x for x in trades if x > 0])
+    total_loss = abs(sum([x for x in trades if x < 0]))
+    pf = (total_profit / total_loss) if total_loss > 0 else 0
+    
+    # Max DD
+    peak = INITIAL_CAPITAL
+    max_dd = 0
+    running_cap = INITIAL_CAPITAL
+    for t in trades:
+        running_cap += t
+        if running_cap > peak: peak = running_cap
+        dd = (peak - running_cap) / peak * 100
+        if dd > max_dd: max_dd = dd
+        
+    stats = {
+        "capital": capital,
+        "trades": len(trades),
+        "win_rate": (len([x for x in trades if x > 0]) / len(trades) * 100) if trades else 0,
+        "pf": pf,
+        "max_dd": max_dd,
+        "return": (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+    }
+    return stats
 
 
 def run_grid_search():
@@ -225,36 +252,29 @@ def run_grid_search():
     months = (today - start_dt).days / 30.417
     
     print(f"🔎 Comparative Search: DAY vs DOTEN vs SWING")
-    print(f"   Period: {months:.1f} months")
-    print("="*130)
-    print(f"STOP |TGT  || DAY RET    (Win%) [Avg/Mo] || DOTEN RET  (Win%) [Avg/Mo] || SWING RET")
-    print("-" * 130)
+    print(f"   Period: {months:.1f} months | Spread: {SPREAD} | Cost: {COST_PER_TRADE}")
+    print("="*140)
+    print(f"STOP |TGT  || DAY [Ret/PF/DD]       || DOTEN [Ret/PF/DD]")
+    print("-" * 140)
     
     for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
         if t <= s: continue 
         
         # Run DAY
-        cap_d, trds_d = run_simulation(nikkei, vix, s, t, mode="DAY")
-        ret_d = (cap_d - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        win_d = (len([x for x in trds_d if x > 0])/len(trds_d)*100) if trds_d else 0
-        avg_d = (cap_d - INITIAL_CAPITAL) / months
+        res_d = run_simulation(nikkei, vix, s, t, mode="DAY")
         
         # Run DOTEN
-        cap_o, trds_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
-        ret_o = (cap_o - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        win_o = (len([x for x in trds_o if x > 0])/len(trds_o)*100) if trds_o else 0
-        avg_o = (cap_o - INITIAL_CAPITAL) / months
+        res_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
 
-        # Run SWING (Reference)
-        cap_s, trds_s = run_simulation(nikkei, vix, s, t, mode="SWING")
-        ret_s = (cap_s - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+        # Winner
+        winner = "DAY  " if res_d["return"] >= res_o["return"] else "DOTEN"
         
-        # Highlight winner
-        winner = "DAY  " if ret_d >= ret_o else "DOTEN"
+        # Print
+        row_d = f"{res_d['return']:>+6.0f}% / {res_d['pf']:4.2f} / {res_d['max_dd']:4.1f}%"
+        row_o = f"{res_o['return']:>+6.0f}% / {res_o['pf']:4.2f} / {res_o['max_dd']:4.1f}%"
         
-        # Print results
-        print(f"  {s:<4}|{t:<4}|| {ret_d:>+8.1f}% ({win_d:>4.1f}%) [{avg_d:>+6.0f}] || {ret_o:>+8.1f}% ({win_o:>4.1f}%) [{avg_o:>+6.0f}] || {ret_s:>+6.1f}% {winner}")
-    print("="*130)
+        print(f"  {s:<4}|{t:<4}|| {row_d:<24} || {row_o:<24} {winner}")
+    print("="*140)
 
 if __name__ == "__main__":
     run_grid_search()
