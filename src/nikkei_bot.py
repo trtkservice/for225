@@ -29,13 +29,10 @@ class Config:
     COST_PER_TRADE = 50       # Estimated commission + slippage per trade
     LOTS = 1                  # Number of Contracts (Leverage)
     
-    RISK_STOP_ATR_MULT = 0.5   # Optimized (Mean Reversion)
-    RISK_TARGET_ATR_MULT = 1.0 # Optimized (Scalp)
     MAX_HOLD_DAYS = 5
     
     # Strategy Parameters
     SHADOW_CAPITAL = 100000
-    MAX_HOLD_DAYS = 5
     
     # Strategy Definitions (A/B Testing)
     STRATEGIES = {
