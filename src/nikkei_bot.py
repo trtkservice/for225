@@ -27,7 +27,7 @@ class Config:
     CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
     TICK_SIZE = 5             # Minimum fluctuation
     COST_PER_TRADE = 50       # Estimated commission + slippage per trade
-    LOTS = 1                  # Number of Contracts (Leverage)
+    LOTS = 2                  # Number of Contracts (Leverage)
     
     MAX_HOLD_DAYS = 5
     
