@@ -223,6 +223,7 @@ def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
     """
     capital = INITIAL_CAPITAL
     trades = []
+    trade_count_debug = 0
     
     # Loop continuously? No, iterate by Day
     # Filter 1m data to only days we have signals for
@@ -260,11 +261,17 @@ def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
         stop = entry_price - s_dist if signal == "LONG" else entry_price + s_dist
         target = entry_price + t_dist if signal == "LONG" else entry_price - t_dist
         
+        # DEBUG: Print trade setup
+        is_debug = trade_count_debug < 5
+        if is_debug:
+            print(f"[{date}] {signal} Entry: {entry_price} | ATR: {atr:.1f} | Stop: {stop} (Dist {s_dist}) | Tgt: {target} (Dist {t_dist})")
+
         # 2. Iterate 1m bars to check hit
         # Vectorized check is possible but simple iteration is reliable
         
         exit_price = None
         exit_reason = None
+        exit_time = None
         
         for idx, row in day_session.iterrows():
             high_p = row['High']
@@ -278,10 +285,12 @@ def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
                 if low_p <= stop:
                     exit_price = stop
                     exit_reason = "STOP"
+                    exit_time = idx.time()
                     break
                 if high_p >= target:
                     exit_price = target
                     exit_reason = "TARGET"
+                    exit_time = idx.time()
                     break
                     
             elif signal == "SHORT":
@@ -289,16 +298,19 @@ def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
                 if high_p >= stop:
                     exit_price = stop
                     exit_reason = "STOP"
+                    exit_time = idx.time()
                     break
                 # Spread check: Ask hits stop
                 if high_p + SPREAD >= stop:
                     exit_price = stop
                     exit_reason = "STOP (Spread)"
+                    exit_time = idx.time()
                     break
                 
                 if low_p <= target:
                     exit_price = target
                     exit_reason = "TARGET"
+                    exit_time = idx.time()
                     break
         
         # 3. If no hit, exit at Close (15:15)
@@ -306,10 +318,15 @@ def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
             last_bar = day_session.iloc[-1]
             exit_price = last_bar['Close']
             exit_reason = "CLOSE"
+            exit_time = last_bar.name.time()
             
         # Calc PnL
         diff = (exit_price - entry_price) if signal == "LONG" else (entry_price - exit_price)
         bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
+        
+        if is_debug:
+            print(f"   -> Exit: {exit_reason} at {exit_time} | Price: {exit_price} | PnL: {bn:.0f}")
+            trade_count_debug += 1
         
         capital += bn
         trades.append(bn)
