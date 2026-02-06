@@ -35,16 +35,20 @@ class Config:
     
     # Strategy Definitions (A/B Testing)
     STRATEGIES = {
-        "optimized": {
-            "name": "Antigravity (Normal)",
-            "stop_mult": 0.6,
-            "target_mult": 1.2
-        },
-        "raptor": {
-            "name": "Raptor (Wide)",
-            "stop_mult": 1.2,
-            "target_mult": 2.4
-        }
+        # Rank 1-10 from Strict Backtest (Spread 5.0, Cost 75)
+        "rank1":  {"name": "R1_Day_0.4_3.0", "stop_mult": 0.4, "target_mult": 3.0, "mode": "DAY", "lots": 2},
+        "rank2":  {"name": "R2_Day_0.4_2.5", "stop_mult": 0.4, "target_mult": 2.5, "mode": "DAY", "lots": 2},
+        "rank3":  {"name": "R3_Day_0.5_3.0", "stop_mult": 0.5, "target_mult": 3.0, "mode": "DAY", "lots": 2},
+        "rank4":  {"name": "R4_Day_0.5_2.5", "stop_mult": 0.5, "target_mult": 2.5, "mode": "DAY", "lots": 2},
+        "rank5":  {"name": "R5_Day_0.4_2.0", "stop_mult": 0.4, "target_mult": 2.0, "mode": "DAY", "lots": 2},
+        "rank6":  {"name": "R6_Day_0.6_3.0", "stop_mult": 0.6, "target_mult": 3.0, "mode": "DAY", "lots": 2},
+        "rank7":  {"name": "R7_Day_0.4_1.5", "stop_mult": 0.4, "target_mult": 1.5, "mode": "DAY", "lots": 2},
+        "rank8":  {"name": "R8_Day_0.4_1.2", "stop_mult": 0.4, "target_mult": 1.2, "mode": "DAY", "lots": 2},
+        "rank9":  {"name": "R9_Day_0.5_2.0", "stop_mult": 0.5, "target_mult": 2.0, "mode": "DAY", "lots": 2},
+        "rank10": {"name": "R10_Day_0.6_2.5", "stop_mult": 0.6, "target_mult": 2.5, "mode": "DAY", "lots": 2},
+        
+        # Reference (Previous Best Swing)
+        # "swing_ref": {"name": "Ref_Swing_0.6_1.2", "stop_mult": 0.6, "target_mult": 1.2, "mode": "SWING", "lots": 2},
     }
     
     # Antigravity Weights
@@ -411,16 +415,22 @@ class PortfolioManager:
         self.data = self._load_data()
 
     def _load_data(self):
+        data = {
+            "predictions": [], 
+            "portfolios": {}
+        }
+        
         if os.path.exists(self.file_path):
             with open(self.file_path, 'r') as f:
-                return json.load(f)
-        return {
-            "predictions": [], 
-            "portfolios": {
-                "optimized": {"capital": 100000, "position": None, "trades": []},
-                "raptor": {"capital": 100000, "position": None, "trades": []}
-            }
-        }
+                loaded = json.load(f)
+                data.update(loaded)
+        
+        # Auto-initialize missing portfolios from Config
+        for key in Config.STRATEGIES.keys():
+            if key not in data["portfolios"]:
+                data["portfolios"][key] = {"capital": 100000, "position": None, "trades": []}
+                
+        return data
 
     def save(self):
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
@@ -431,6 +441,10 @@ class PortfolioManager:
         """Update ALL portfolios based on their active positions."""
         
         for strat_key, strat_conf in Config.STRATEGIES.items():
+            # Ensure portfolio exists (safety)
+            if strat_key not in self.data["portfolios"]:
+                self.data["portfolios"][strat_key] = {"capital": 100000, "position": None, "trades": []}
+                
             pf = self.data["portfolios"][strat_key]
             
             if not pf.get("position"):
@@ -441,6 +455,8 @@ class PortfolioManager:
             entry = pos["entry_price"]
             stop = pos["stop"]
             target = pos["target"]
+            lots = strat_conf.get("lots", Config.LOTS)
+            mode = strat_conf.get("mode", "SWING")
             
             # Checks
             hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
@@ -453,8 +469,13 @@ class PortfolioManager:
                 days_held = (now_dt - entry_dt).days
             except:
                 days_held = 99
-                
-            time_stop = days_held >= Config.MAX_HOLD_DAYS
+            
+            # Day Trade Logic: Close if we are at the end of the day (days_held >= 0 check is enough if running daily)
+            # Actually, if we run this script AT CLOSE (15:15 or 06:00), we close DAY positions now.
+            is_day_close = (mode == "DAY") 
+            is_swing_expire = (mode == "SWING" and days_held >= Config.MAX_HOLD_DAYS)
+            
+            time_stop = is_day_close or is_swing_expire
             
             # Outcome
             exit_price = None
@@ -463,18 +484,18 @@ class PortfolioManager:
             if hit_stop:
                 exit_price = stop
                 reason = "STOP"
-                if hit_target: pass
+                if hit_target: pass # Stop takes precedence if both hit (conservative)
             elif hit_target:
                 exit_price = target
                 reason = "TARGET"
             elif time_stop:
                 exit_price = round_to_tick(current_price_raw)
-                reason = "TIME_STOP"
+                reason = "TIME_CLOSE" if mode == "DAY" else "TIME_STOP"
                 
             if exit_price is not None:
                 p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * Config.LOTS
-                net_pnl = gross_pnl - (Config.COST_PER_TRADE * Config.LOTS)
+                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * lots
+                net_pnl = gross_pnl - (Config.COST_PER_TRADE * lots)
                 
                 pf["capital"] += net_pnl
                 pf["trades"].append({
@@ -483,6 +504,7 @@ class PortfolioManager:
                     "direction": direction,
                     "entry_price": int(entry),
                     "exit_price": int(exit_price),
+                    "lots": lots,
                     "pnl_points": int(p_diff),
                     "pnl_yen": int(net_pnl),
                     "close_reason": reason,

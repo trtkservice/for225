@@ -150,42 +150,10 @@ def _generate_strategy_block(pf, name, desc, css_class):
     </div>
     """, trades
 
-def generate_html(data):
-    # Prepare Data
-    predictions = data.get("predictions", [])
-    
-    # Handle Legacy or New Structure
-    if "portfolios" in data:
-        pf_opt = data["portfolios"].get("optimized", {})
-        pf_rap = data["portfolios"].get("raptor", {})
-    else:
-        # Fallback if someone runs old data
-        pf_opt = data.get("shadow_portfolio", {})
-        pf_rap = {"trades": [], "capital": 100000}
+def _get_css():
+    return DashboardConfig.CSS
 
-    # Generate Blocks
-    html_opt, trades_opt = _generate_strategy_block(pf_opt, "Antigravity (Normal)", "Stop:0.6 / Target:1.2 (Balanced)", "col-normal")
-    html_rap, trades_rap = _generate_strategy_block(pf_rap, "Raptor (Wide)", "Stop:1.2 / Target:2.4 (High Grip)", "col-raptor")
-    
-    # Chart Data Build
-    # We need to synchronize two equity curves by trade count or time. 
-    # For simplicity, we plot by "Trade Sequence". Real time sync is harder without unifying dates.
-    # Let's create equity curve arrays.
-    
-    def get_equity_curve(trades):
-        curve = [100000]
-        for t in trades:
-            curve.append(curve[-1] + t.get("pnl_yen", 0))
-        return curve
-        
-    eq_opt = get_equity_curve(trades_opt)
-    eq_rap = get_equity_curve(trades_rap)
-    
-    # Make length equal for chart visual (fill last value)
-    max_len = max(len(eq_opt), len(eq_rap))
-    labels = list(range(max_len))
-    
-    # Predictions Table
+def _generate_prediction_log(predictions):
     pred_rows = ""
     for p in reversed(predictions[-15:]):
         direction = p["prediction"]["direction"]
