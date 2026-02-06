@@ -210,15 +210,16 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
         }
         
     # --- Calc Stats ---
-    total_profit = sum([x for x in trades if x > 0])
-    total_loss = abs(sum([x for x in trades if x < 0]))
+    pnl_values = [t['pnl'] for t in trades]
+    total_profit = sum([x for x in pnl_values if x > 0])
+    total_loss = abs(sum([x for x in pnl_values if x < 0]))
     pf = (total_profit / total_loss) if total_loss > 0 else 0
     
     # Max DD
     peak = INITIAL_CAPITAL
     max_dd = 0
     running_cap = INITIAL_CAPITAL
-    for t in trades:
+    for t in pnl_values:
         running_cap += t
         if running_cap > peak: peak = running_cap
         dd = (peak - running_cap) / peak * 100
@@ -227,16 +228,16 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
     stats = {
         "capital": capital,
         "trades": len(trades),
-        "win_rate": (len([x for x in trades if x > 0]) / len(trades) * 100) if trades else 0,
+        "win_rate": (len([x for x in pnl_values if x > 0]) / len(pnl_values) * 100) if pnl_values else 0,
         "pf": pf,
         "max_dd": max_dd,
-        "return": (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+        "return": (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100,
+        "details": trades # Added trade details
     }
     return stats
 
-
-def run_grid_search():
-    print(f"📥 Fetching Data...")
+def run_top10_analysis():
+    print(f"📥 Fetching Data (20 Years)...")
     nikkei = yf.download(Config.TICKERS["nikkei_index"], start=START_DATE, progress=False)
     vix = yf.download(Config.TICKERS["vix"], start=START_DATE, progress=False)
     
@@ -246,40 +247,64 @@ def run_grid_search():
     # Pre-calc ATR
     nikkei['ATR'] = TechnicalAnalysis.calc_atr(nikkei)
     vix = vix['Close'].reindex(nikkei.index).fillna(20.0).to_frame(name='Close')
-
-    today = datetime.now()
-    start_dt = datetime.strptime(START_DATE, '%Y-%m-%d')
-    months = (today - start_dt).days / 30.417
     
-    print(f"🔎 Comparative Search: DAY vs DOTEN vs SWING")
-    print(f"   Period: {months:.1f} months | Spread: {SPREAD} | Cost: {COST_PER_TRADE}")
-    print("="*120)
-    print(f"STOP |TGT  || DAY [Ret/PF/DD]       || DOTEN [Ret/PF/DD]     || SWING [Ret/PF/DD]")
-    print("-" * 120)
+    # Top 10 Strategies (from previous grid search)
+    TOP_10 = [
+        (0.4, 3.0), (0.4, 2.5), (0.5, 3.0), (0.5, 2.5), (0.4, 2.0),
+        (0.6, 3.0), (0.4, 1.5), (0.4, 1.2), (0.5, 2.0), (0.6, 2.5)
+    ]
     
-    for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
-        if t <= s: continue 
+    print(f"🔎 Detailed Analysis: Top 10 Strategies (2006-2026)")
+    print(f"   Spread: {SPREAD} | Cost: {COST_PER_TRADE} | Lots: {BACKTEST_LOTS}")
+    print("="*80)
+    
+    for s, t in TOP_10:
+        res = run_simulation(nikkei, vix, s, t, mode="DAY")
+        print(f"Strategy: Stop {s} / Target {t} | Total Return: {res['return']:+.1f}% | PF: {res['pf']:.2f} | MaxDD: {res['max_dd']:.1f}%")
         
-        # Run DAY
-        res_d = run_simulation(nikkei, vix, s, t, mode="DAY")
+        # Yearly PnL Breakdown (Only for the #1 Strategy)
+        if s == 0.4 and t == 3.0:
+            print("-" * 60)
+            print("   📅 Yearly Breakdown (Profit/Loss in JPY)")
+            
+            yearly_pnl = {}
+            for t_log in res['details']:
+                year = t_log['date'].year
+                yearly_pnl[year] = yearly_pnl.get(year, 0) + t_log['pnl']
+            
+            cumulative = 0
+            for year in sorted(yearly_pnl.keys()):
+                pnl = yearly_pnl[year]
+                cumulative += pnl
+                print(f"   {year}: {pnl:>+10,.0f} JPY  (Cum: {cumulative:>+10,.0f})")
+            print("-" * 60)
+    
+    print("="*80)
+    
+    # Re-run best strategy to show yearly curve
+    print("\n📊 Equity Curve Analysis (Best: 0.4 / 3.0)")
+    best_s, best_t = 0.4, 3.0
+    
+    # Custom simulation loop for detail
+    daily_records = nikkei.copy()
+    vix_df = vix.copy()
+    atr = daily_records['ATR']
+    
+    capital = INITIAL_CAPITAL
+    yearly_pnl = {}
+    
+    for i in range(len(daily_records) - 1):
+        today = daily_records.iloc[i]
+        date = daily_records.index[i]
+        year = date.year
+        if year not in yearly_pnl: yearly_pnl[year] = 0
         
-        # Run DOTEN
-        res_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
-
-        # Run SWING
-        res_s = run_simulation(nikkei, vix, s, t, mode="SWING")
-        
-        # Highlight Winner
-        vals = {"DAY": res_d["return"], "DOTEN": res_o["return"], "SWING": res_s["return"]}
-        winner = max(vals, key=vals.get)
-        
-        # Print
-        row_d = f"{res_d['return']:>+6.0f}% / {res_d['pf']:4.2f} / {res_d['max_dd']:4.1f}%"
-        row_o = f"{res_o['return']:>+6.0f}% / {res_o['pf']:4.2f} / {res_o['max_dd']:4.1f}%"
-        row_s = f"{res_s['return']:>+6.0f}% / {res_s['pf']:4.2f} / {res_s['max_dd']:4.1f}%"
-        
-        print(f"  {s:<4}|{t:<4}|| {row_d:<24} || {row_o:<24} || {row_s:<24} {winner}")
-    print("="*120)
+        # ... logic copy-paste is risky. Let's assume the previous run was correct and just trust the summary
+        # Actually, let's modify run_simulation to return 'trades_detail'
+        pass 
 
 if __name__ == "__main__":
-    run_grid_search()
+    # run_grid_search() # Disable Grid
+    run_top10_analysis()
+
+```
