@@ -12,7 +12,7 @@ from src.nikkei_bot import Config, TechnicalAnalysis, LiLFlexxEngine, round_to_t
 
 # --- Backtest Configuration ---
 INITIAL_CAPITAL = 100000
-START_DATE = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
+START_DATE = (datetime.now() - timedelta(days=20*365)).strftime('%Y-%m-%d')
 BACKTEST_LOTS = 1
 
 # Rakuten Securities Cost Simulation
