@@ -121,17 +121,66 @@ class FastBacktestEngine(LiLFlexxEngine):
         self.data = {"nikkei_futures_daily": daily_df}
         self.scores = {}
         
+    def _analyze_trend(self):
+        # Simplified Trend Analysis for Daily
+        df = self.data["nikkei_futures_daily"]
+        if df is None or len(df) < 25:
+            self.scores["trend"] = 0
+            self.scores["details"] = {"trend_summary": "Insufficient Data"}
+            return
+            
+        close = df['Close']
+        sma5 = close.rolling(window=5).mean().iloc[-1]
+        sma25 = close.rolling(window=25).mean().iloc[-1]
+        
+        # Simple Logic
+        val = 0
+        if sma5 > sma25: val = 0.5
+        else: val = -0.5
+        
+        # Check slope?
+        if close.iloc[-1] > close.iloc[-5]: val += 0.3
+        else: val -= 0.3
+        
+        self.scores["trend"] = round(np.clip(val, -1.0, 1.0), 3)
+        self.scores["details"] = {"trend_summary": "Daily SMA"}
+
+    def _analyze_volatility(self):
+        # Simplified Volatility (ATR based if VIX is missing)
+        # We don't have VIX in the Excel data, so let's use recent ATR vs historical
+        # or just set to neutral 0.
+        
+        # Actually Nikkei Bot uses 'vix_daily' usually. Here we don't have it.
+        # Let's fake it with ATR-based volatility score
+        
+        df = self.data["nikkei_futures_daily"]
+        if 'ATR' not in df.columns:
+            self.scores["volatility"] = 0
+            self.scores["details"] = {"vix": 20.0}
+            return
+            
+        atr = df['ATR'].iloc[-1]
+        # ATR > 400 is high?
+        if atr > 500: val = -0.5 # Too volatile
+        elif atr < 200: val = -0.2 # Too quiet
+        else: val = 0.3 # Good
+        
+        self.scores["volatility"] = val
+        self.scores["details"] = {"vix": 20.0} # Placeholder
+
     def _analyze_momentum(self):
         # Simplified momentum for daily proxy
         df = self.data["nikkei_futures_daily"]
         if df is None or len(df) < 50: 
             self.scores["momentum"] = 0
-            self.scores["details"] = {"rsi": 50}
+            if "details" not in self.scores: self.scores["details"] = {} 
+            self.scores["details"]["rsi"] = 50
             return
 
         close = df['Close']
         rsi = TechnicalAnalysis.calc_rsi(close).iloc[-1]
-        self.scores["details"] = {"rsi": round(rsi, 1) if not np.isnan(rsi) else 50}
+        if "details" not in self.scores: self.scores["details"] = {}
+        self.scores["details"]["rsi"] = round(rsi, 1) if not np.isnan(rsi) else 50
         
         val = 0
         if rsi > 70: val -= 0.3
