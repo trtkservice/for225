@@ -34,41 +34,29 @@ def load_and_merge_data():
     pattern = os.path.join(DATA_DIR, "N225minif_*.xlsx")
     files = sorted(glob.glob(pattern))
     
-    if not files:
-        print("❌ No excel files found matching 'N225minif_*.xlsx'")
-        sys.exit(1)
-        
     print(f"📥 Loading {len(files)} Excel files... (This may take a minute)")
     
     df_list = []
-    first_file = True
     for f in files:
         print(f"   Reading {os.path.basename(f)}...")
         try:
             temp = pd.read_excel(f)
-            if first_file:
-                print(f"👀 Columns in {os.path.basename(f)}: {temp.columns.tolist()}")
-                # sys.exit(0) # Don't exit yet, let's try to map dynamically if possible, but exiting is safer to see logs.
-                # Actually, let's just print and let it fail, so we can see the logs.
-                first_file = False
             df_list.append(temp)
         except Exception as e:
             print(f"   ⚠️ Failed to read {f}: {e}")
 
     full_df = pd.concat(df_list, ignore_index=True)
-    print(f"👀 Full DF Columns: {full_df.columns.tolist()}")
     
-    # Rename map (adjust based on actual file headers if needed)
+    # Rename map (Corrected based on logs)
     rename_map = {
         '日付': 'Date', 'Date': 'Date', 'date': 'Date',
-        '時刻': 'Time', 'Time': 'Time', 'time': 'Time',
+        '時間': 'Time', '時刻': 'Time', 'Time': 'Time', 'time': 'Time',
         '始値': 'Open', 'Open': 'Open', 'open': 'Open',
         '高値': 'High', 'High': 'High', 'high': 'High',
         '安値': 'Low', 'Low': 'Low', 'low': 'Low',
         '終値': 'Close', 'Close': 'Close', 'close': 'Close'
     }
     full_df.rename(columns=rename_map, inplace=True)
-    print(f"👀 Renamed Columns: {full_df.columns.tolist()}")
     
     # Combine Date+Time to Datetime Index
     # Note: 'Date' might be string or datetime. 'Time' might be string/time object.
