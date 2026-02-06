@@ -212,6 +212,12 @@ def generate_signals(df_daily):
         atr = df_daily.iloc[i]['ATR']
         if pd.isna(atr): atr = 300.0
         
+        # --- STRATEGY FLIP: MEAN REVERSION ---
+        # Original logic failed (PF 0.8). Let's fade the signal.
+        if sig == "LONG": sig = "SHORT"
+        elif sig == "SHORT": sig = "LONG"
+        # -------------------------------------
+        
         signals[next_date] = {'type': sig, 'atr': atr}
         
     return signals
