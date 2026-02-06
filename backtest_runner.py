@@ -133,7 +133,7 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 diff = (exit_price - position['entry']) if p_type == "LONG" else (position['entry'] - exit_price)
                 bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
-                trades.append(bn)
+                trades.append({'date': daily_records.index[i], 'pnl': bn})
                 position = None
                 continue
 
@@ -167,7 +167,7 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 diff = (next_open - position['entry']) if position['type'] == 'LONG' else (position['entry'] - next_open)
                 bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
                 capital += bn
-                trades.append(bn)
+                trades.append({'date': daily_records.index[i+1], 'pnl': bn})
                 position = None # Closed, will allow new entry below
                 
                 # BUT, wait, "signal" is for next entry. 
