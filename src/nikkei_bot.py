@@ -51,7 +51,7 @@ class Config:
         # "swing_ref": {"name": "Ref_Swing_0.6_1.2", "stop_mult": 0.6, "target_mult": 1.2, "mode": "SWING", "lots": 2},
     }
     
-    # Antigravity Weights
+    # LiL Flexx Weights
     WEIGHT_TREND = 0.4
     WEIGHT_MOMENTUM = 0.4
     WEIGHT_VOLATILITY = 0.2
@@ -219,11 +219,8 @@ class TechnicalAnalysis:
         true_range = ranges.max(axis=1)
         return true_range.rolling(window=period).mean()
 
-class AntigravityEngine:
-    """
-    Simulates physical forces in the market.
-    Trend (River), Momentum (Wind), Volatility (Temperature).
-    """
+class LiLFlexxEngine:
+    """Core Trading Logic (Trend + Momentum + Volatility + Patterns)."""
     
     def __init__(self, market_data):
         self.data = market_data
@@ -374,12 +371,12 @@ class GeminiAdvisor:
     def _create_prompt(self, scores):
         return f"""
         Role: Senior Hedge Fund Manager.
-        Task: Review Antigravity Engine Scores and Approve/Reject Trade.
+        Task: Review LiL Flexx Engine Scores and Approve/Reject Trade.
         
         DATA:
         - Trend (Daily): {scores['trend']} ({scores['details'].get('trend_summary')})
         - Momentum (15m): {scores['momentum']} (RSI: {scores['details'].get('rsi')})
-        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix')})
+        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix']})
         - TOTAL SCORE: {scores['total']}
         - PROPOSED SIGNAL: {scores['signal']}
         
@@ -586,7 +583,7 @@ class NikkeiBot:
         # ------------------------------------------------------------
 
         print("="*60)
-        print("🚀 Antigravity Engine v2.1 (A/B Testing Mode)")
+        print("🚀 LiL Flexx Engine v2.1 (Multiverse Mode)")
         print(f"📅 {datetime.now(Config.JST).strftime('%Y-%m-%d %H:%M JST')}")
         print("="*60)
 
@@ -601,7 +598,7 @@ class NikkeiBot:
 
         # 2. Analyze
         print("\n🧮 Calculating Scores...")
-        engine = AntigravityEngine(data)
+        engine = LiLFlexxEngine(data)
         scores = engine.analyze()
         
         print(f"   🌊 Trend:   {scores['trend']:+}")

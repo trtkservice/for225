@@ -182,15 +182,44 @@ def _generate_prediction_log(predictions):
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Antigravity A/B Dashboard</title>
+    <title>LiL Flexx Engine | Multiverse Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>{DashboardConfig.CSS}</style>
+    <style>
+        {_get_css()}
+        .strategy-grid {{ 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); 
+            gap: 20px; 
+        }}
+        .header {{
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 20px;
+            background: linear-gradient(90deg, #00d4ff, #7c3aed, #ff6b6b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }}
+        .header span {{
+            font-size: 0.5em;
+            color: #888;
+            -webkit-text-fill-color: #888;
+        }}
+        .updated {{
+            text-align: center;
+            margin-top: 40px;
+            font-size: 0.8em;
+            color: #555;
+        }}
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Antigravity Battle Arena</h1>
+        <div class="header">
+            LiL FLEXX ENGINE <span>// MULTIVERSE EDITION</span>
+        </div>
         <p style="text-align:center; color:#888; margin-bottom:30px">A/B Testing: Optimized (Normal) vs Raptor (Wide)</p>
         
         <div class="chart-container">

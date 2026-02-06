@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # Import Core Logic from src
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from src.nikkei_bot import Config, TechnicalAnalysis, AntigravityEngine, round_to_tick
+from src.nikkei_bot import Config, TechnicalAnalysis, LiLFlexxEngine, round_to_tick
 
 # --- Backtest Configuration ---
 INITIAL_CAPITAL = 100000
@@ -25,7 +25,7 @@ TARGET_RANGE = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
 
 # --- Simulation Engine ---
 
-class BacktestEngine(AntigravityEngine):
+class BacktestEngine(LiLFlexxEngine):
     """
     Extends production engine to support daily-data-only backtesting.
     Overrides detailed intraday checks with daily proxies.
