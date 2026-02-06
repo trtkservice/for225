@@ -108,11 +108,93 @@ class MarketDataManager:
         try:
             t = yf.Ticker(Config.TICKERS["nikkei_futures"])
             data["nikkei_15m"] = t.history(period="1mo", interval="15m")
+            # Fetch News headlines (Top 5)
+            data["news"] = t.news[:5] if t.news else []
         except Exception as e:
-            print(f"⚠️ Error fetching intraday: {e}")
+            print(f"⚠️ Error fetching intraday/news: {e}")
             data["nikkei_15m"] = pd.DataFrame()
+            data["news"] = []
             
         return data
+
+class GeminiAdvisor:
+    """Interfaces with Google Gemini AI as a Risk Gatekeeper."""
+    
+    def __init__(self, api_key):
+        self.api_key = api_key
+        if api_key:
+            genai.configure(api_key=api_key)
+            
+    def consult(self, scores, market_data):
+        signal = scores.get("signal", "WAIT")
+        
+        # If Raptor says WAIT, no need to ask AI (save tokens)
+        if signal == "WAIT":
+             return {"approved": True, "reasoning": "Raptor is waiting.", "direction": "WAIT"}
+
+        if not self.api_key:
+            return {"approved": True, "reasoning": "No API Key (AI Check Skipped)", "direction": signal}
+            
+        news_items = market_data.get("news", [])
+        prompt = self._create_gatekeeper_prompt(scores, news_items)
+        
+        # Fallback to multiple models
+        for model_name in ['gemini-1.5-flash', 'gemini-pro']:
+            try:
+                model = genai.GenerativeModel(model_name)
+                res = model.generate_content(prompt)
+                return self._parse_response(res.text, signal)
+            except Exception as e:
+                print(f"⚠️  AI Model {model_name} Error: {e}")
+                
+        # If AI fails, default to APPROVE (Trust the Script)
+        return {"approved": True, "reasoning": "AI Unavailable (Default Approve)", "direction": signal}
+
+    def _create_gatekeeper_prompt(self, scores, news_items):
+        news_text = "\n".join([f"- {n.get('title')} ({n.get('publisher')})" for n in news_items])
+        
+        return f"""
+        Role: Senior Risk Manager for a Hedge Fund.
+        Task: Review the Quantitative Strategy (Raptor)'s signal and APPROVE or REJECT based on current market news.
+        
+        STRATEGY SIGNAL: {scores['signal']}
+        Score details: Trend={scores['trend']}, Momentum={scores['momentum']}, Total={scores['total']}
+        
+        LATEST NEWS HEADLINES:
+        {news_text}
+        
+        INSTRUCTIONS:
+        1. Our strategy (Raptor) has a +1500% backtest record. It is highly reliable.
+        2. Your job is ONLY to stop the trade if there is a "Black Swan" or "Extreme Risk" event visible in the news.
+           (e.g., Central Bank Surprise, War outbreak, Major Crash ongoing).
+        3. If the news is normal (earnings, mild fluctuation), APPROVE the trade. Do not overthink technicals.
+        4. If you REJECT, provide a clear, concise reason.
+        
+        OUTPUT FORMAT (JSON):
+        {{
+            "approved": true/false,
+            "reasoning": "Short explanation..."
+        }}
+        """
+
+    def _parse_response(self, text, original_signal):
+        try:
+            # Clean markdown
+            text = re.sub(r'```json', '', text).replace('```', '').strip()
+            data = json.loads(text)
+            
+            approved = data.get("approved", True)
+            reason = data.get("reasoning", "Authorized by AI.")
+            
+            if not approved:
+                print(f"🛑 AI GATEKEEPER BLOCKED TRADE: {reason}")
+                return {"approved": False, "reasoning": f"AI BLOCKED: {reason}", "direction": "WAIT"}
+            
+            return {"approved": True, "reasoning": reason, "direction": original_signal}
+            
+        except Exception as e:
+            print(f"⚠️ AI Parse Error: {e}")
+            return {"approved": True, "reasoning": "Parse Error (Default Approve)", "direction": original_signal}
 
 class TechnicalAnalysis:
     """Statistical Calculation Library."""
