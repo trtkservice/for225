@@ -131,147 +131,153 @@ def calculate_slope(series):
     a, b = np.linalg.lstsq(A, y, rcond=None)[0]
     return a
 
-def run_raptor_simulation(df_1m, df_15m, g_cut, n_period, r_factor):
-    """
-    Run Raptor225 Logic Simulation.
-    Target: Day Session (08:45-15:15)
-    """
-    capital = INITIAL_CAPITAL
-    trades = []
-    
-    # Group by Date
+# --- Raptor Best Settings ---
+BEST_G = 0.0025
+BEST_N = 48
+BEST_R = 1.8
+
+# Search Range for Risk Management
+STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8, 1.0]
+TARGET_RANGE = [1.0, 2.0, 3.0, 4.0, 5.0, 99.0] # 99.0 = Almost No Target
+
+def run_raptor_with_risk_grid(df_1m, df_15m, g_cut=BEST_G, n_period=BEST_N):
+    # Pre-calculate Sessions (Optimization)
     unique_dates = sorted(list(set(df_1m.index.date)))
     
-    trade_count = 0
+    # Pre-calc daily ATR for dynmic stop/target
+    df_daily = df_1m.resample('D').agg({'High':'max','Low':'min','Close':'last'}).dropna()
+    df_daily['ATR'] = (df_daily['High'] - df_daily['Low']).rolling(14).mean() # Simplified ATR
+    
+    signals = [] # List of (Date, Action, ATR)
+    
+    # 1. Generate Signals First (Avoid re-calc in loop)
+    for i in range(1, len(unique_dates)):
+        curr_date = unique_dates[i]
+        prev_date = unique_dates[i-1]
+        
+        # Data slices (Same logic as before)
+        day_start = datetime.combine(curr_date, time(8, 45))
+        prev_night_start = datetime.combine(prev_date, time(16, 30))
+        cutoff_time = day_start
+        
+        # Quick checks to skip if data missing
+        if day_start not in df_1m.index: continue # Approx check
+        
+        # Need actual data access, slow loop but necessary for accuracy
+        # ... (Signal logic omitted here for brevity, assume we use the same logic block)
+        # To save code space, we merge logic into the main simulation loop below
+        pass 
+
+    print(f"🔎 Raptor225 Risk Management Grid (G={g_cut}, N={n_period})")
+    print("="*80)
+    print("Stop | Tgt  || Ret%   | PF   | Win%  | Trades")
+    print("-" * 80)
+
+    for s_mult, t_mult in itertools.product(STOP_RANGE, TARGET_RANGE):
+        res = run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, s_mult, t_mult, df_daily)
+        print(f"{s_mult:<4} | {t_mult:<4} || {res['return']:>6.1f}% | {res['pf']:4.2f} | {res['win_rate']:5.1f}% | {res['trades']}")
+    print("="*80)
+
+def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target_mult, df_daily):
+    capital = INITIAL_CAPITAL
+    trades = []
     win_count = 0
+    trade_count = 0
+    
+    unique_dates = sorted(list(set(df_1m.index.date)))
     
     for i in range(1, len(unique_dates)):
         curr_date = unique_dates[i]
         prev_date = unique_dates[i-1]
         
-        # 1. Get Day Session Data (Today)
+        # --- RAPTOR LOGIC (Repeated for each grid, could be optimized but fast enough) ---
         day_start = datetime.combine(curr_date, time(8, 45))
         day_end = datetime.combine(curr_date, time(15, 15))
+        
         day_data = df_1m.loc[day_start:day_end]
-        
         if day_data.empty: continue
-        
-        # Entry Price (08:45 Open)
         entry_price = day_data.iloc[0]['Open']
         
-        # 2. Get Prev Session Data (NIGHT: Yesterday 16:30 - Today 06:00)
         night_start = datetime.combine(prev_date, time(16, 30))
-        night_end = datetime.combine(curr_date, time(6, 0)) # approx
-        
+        night_end = datetime.combine(curr_date, time(6, 0))
         night_data = df_1m.loc[night_start:night_end]
         
-        if night_data.empty:
-            # If no night session (Monday?), fallback to Prev DAY Close?
-            # Or skip. Raptor says "Prev Session Close".
-            # For simplicity, if no NIGHT data, skip (insufficient data).
-            continue
-            
+        if night_data.empty: continue
         prev_close = night_data.iloc[-1]['Close']
         prev_open = night_data.iloc[0]['Open']
         
-        # --- LOGIC START ---
-        
-        # 4) RiskGate (Gap)
-        # gap_rate = (expected_open_price - prev_session_close) / prev_session_close
+        # Gap
         gap_rate = (entry_price - prev_close) / prev_close
-        if abs(gap_rate) >= g_cut:
-            # NO-TRADE (RiskGate Fail)
-            continue
-            
-        # 5) Direction Indicators
+        if abs(gap_rate) >= g_cut: continue
         
-        # B: Prev Session Direction
-        # +1 if Yang (Close > Open), -1 if Yin (Close < Open)
-        score_b = 0
-        if prev_close > prev_open: score_b = 1
-        elif prev_close < prev_open: score_b = -1
+        # B
+        score_b = 1 if prev_close > prev_open else -1
         
-        # D: Overheat Check
-        # Current Night Range vs Avg Night Range (N=10 sessions)
-        # We need historical night ranges. For speed, calculate on the fly or pre-calc?
-        # On-the-fly approximation: just check Range vs ATR? 
-        # Or skip D for now to strictly follow "Simple Raptor". 
-        # Let's Skip D first to see baseline. (Assuming r_factor is high enough)
-        # Or simpler: if range > 1.8 * prev_range
-        night_range = night_data['High'].max() - night_data['Low'].min()
-        # To implement D correctly requires valid history. Let's omit D for MVP.
-        
-        # C: Momentum (15m N periods)
-        # Get 15m data ending before 08:45 Today
-        cutoff_time = day_start
-        recent_15m = df_15m.loc[:cutoff_time].iloc[-(n_period+1):-1] # Exclude exactly 08:45 bar
-        
+        # C
+        recent_15m = df_15m.loc[:day_start].iloc[-(n_period+1):-1]
         if len(recent_15m) < n_period: continue
-        
         slope = calculate_slope(recent_15m['Close'])
-        score_c = 0
-        if slope > 0.05: score_c = 1 # Threshold for slope? Or just > 0?
-        elif slope < -0.05: score_c = -1
-        # Raptor prompt: "Positive:+1, Negative:-1, Tiny:0"
-        # Let's assume strict signs for now.
-        if slope > 0: score_c = 1
-        elif slope < 0: score_c = -1
+        score_c = 1 if slope > 0 else -1
         
-        # Total Score
-        total_score = score_b + score_c
-        
-        # Verdict
+        total = score_b + score_c
         action = "NO-TRADE"
-        if total_score >= 2: action = "BUY"
-        elif total_score <= -2: action = "SELL"
+        if total >= 2: action = "BUY"
+        elif total <= -2: action = "SELL"
         
         if action == "NO-TRADE": continue
         
-        # --- EXECUTION (Simulated) ---
+        # --- RISK EXECUTION ---
+        # Get ATR
+        atr = 300 # Default
+        try:
+            atr = df_daily.loc[str(prev_date)]['ATR']
+            if pd.isna(atr): atr = 300
+        except: pass
         
-        # Exit: Close (15:15)
-        exit_price = day_data.iloc[-1]['Close']
+        s_dist = round_to_tick(atr * stop_mult)
+        t_dist = round_to_tick(atr * target_mult)
         
-        # PnL
+        stop = entry_price - s_dist if action == "BUY" else entry_price + s_dist
+        target = entry_price + t_dist if action == "BUY" else entry_price - t_dist
+        
+        # Intra-bar check
+        exit_price = None
+        
+        # Vectorized check for day
+        # For BUY: Low < Stop? High > Target?
+        # For SELL: High > Stop? Low < Target?
+        
+        # We need precise timing.
+        for idx, row in day_data.iterrows():
+            if action == "BUY":
+                if row['Low'] <= stop: exit_price = stop; break
+                if row['High'] >= target: exit_price = target; break
+            elif action == "SELL":
+                if row['High'] >= stop: exit_price = stop; break
+                if row['Low'] <= target: exit_price = target; break
+        
+        if exit_price is None:
+            exit_price = day_data.iloc[-1]['Close']
+            
         diff = (exit_price - entry_price) if action == "BUY" else (entry_price - exit_price)
-        bn = (diff * 100) - 0 # Lots=100 (mini), Cost=0 as per Raptor spec
+        bn = (diff * 100)
         
         trades.append(bn)
         capital += bn
         trade_count += 1
         if bn > 0: win_count += 1
-        
-    # Stats
+
     total_profit = sum([x for x in trades if x > 0])
     total_loss = abs(sum([x for x in trades if x < 0]))
     pf = (total_profit / total_loss) if total_loss > 0 else 0
-    win_rate = (win_count / trade_count * 100) if trade_count > 0 else 0
-    ret = (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-    
     return {
-        "return": ret,
-        "pf": pf,
-        "trades": trade_count,
-        "win_rate": win_rate
+        "return": (capital - INITIAL_CAPITAL)/INITIAL_CAPITAL*100,
+        "pf": pf, "win_rate": (win_count/trade_count*100) if trade_count else 0,
+        "trades": trade_count
     }
 
-def run_grid_search_raptor():
-    # 1. Load Data
-    df_1m = load_and_merge_data()
-    # 2. create 15m
-    df_15m = create_session_data(df_1m)
-    
-    print(f"🔎 Raptor225 Grid Search")
-    print(f"   Period: 2018-2025 | Logic: Gap < Cut, B+C >= 2 -> Trade")
-    print("="*80)
-    print("G_cut   | N  || Ret%   | PF   | Win%  | Trades")
-    print("-" * 80)
-    
-    for g_cut, n_period in itertools.product(G_CUT_RANGE, N_RANGE):
-        res = run_raptor_simulation(df_1m, df_15m, g_cut, n_period, R_FACTOR)
-        print(f"{g_cut:.4f} | {n_period:<2} || {res['return']:>6.1f}% | {res['pf']:4.2f} | {res['win_rate']:5.1f}% | {res['trades']}")
-        
-    print("="*80)
-
 if __name__ == "__main__":
-    run_grid_search_raptor()
+    # Load once
+    df_1m = load_and_merge_data()
+    df_15m = create_session_data(df_1m)
+    run_raptor_with_risk_grid(df_1m, df_15m)
