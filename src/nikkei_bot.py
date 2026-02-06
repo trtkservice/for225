@@ -376,7 +376,7 @@ class GeminiAdvisor:
         DATA:
         - Trend (Daily): {scores['trend']} ({scores['details'].get('trend_summary')})
         - Momentum (15m): {scores['momentum']} (RSI: {scores['details'].get('rsi')})
-        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix']})
+        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix')})
         - TOTAL SCORE: {scores['total']}
         - PROPOSED SIGNAL: {scores['signal']}
         
