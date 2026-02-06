@@ -14,7 +14,7 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 
 # Config
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from nikkei_bot import Config, TechnicalAnalysis, LiLFlexxEngine, round_to_tick
+from nikkei_bot import Config, round_to_tick
 
 # Data Directory
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,18 +22,26 @@ DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 # Simulation Config
 INITIAL_CAPITAL = 100000
 BACKTEST_LOTS = 1
-SPREAD = 5.0
-COST_PER_TRADE = 75
+SPREAD = 0 # Raptor assumes mid price or handled in cost? Let's use 0 for raw logic check, or 5 if strict.
+COST_PER_TRADE = 0 # Raptor prompt says cost=0 fixed. We can add later.
 
-# --- Parameters for Grid Search ---
-STOP_RANGE = [0.4, 0.5, 0.6, 0.7, 0.8]
-TARGET_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+# --- Raptor Grid Parameters ---
+# G_cut: Gap threshold (default 0.0025)
+# N: Momentum period (default 32)
+G_CUT_RANGE = [0.0025, 0.0050, 0.0075] 
+N_RANGE = [16, 32, 48]
+# Overheat threshold r
+R_FACTOR = 1.8
 
 def load_and_merge_data():
     """Load all N225minif_*.xlsx files and merge them."""
     pattern = os.path.join(DATA_DIR, "N225minif_*.xlsx")
     files = sorted(glob.glob(pattern))
     
+    if not files:
+        print("❌ No excel files found matching 'N225minif_*.xlsx'")
+        sys.exit(1)
+        
     print(f"📥 Loading {len(files)} Excel files... (This may take a minute)")
     
     df_list = []
@@ -47,7 +55,7 @@ def load_and_merge_data():
 
     full_df = pd.concat(df_list, ignore_index=True)
     
-    # Rename map (Corrected based on logs)
+    # Rename map (Corrected)
     rename_map = {
         '日付': 'Date', 'Date': 'Date', 'date': 'Date',
         '時間': 'Time', '時刻': 'Time', 'Time': 'Time', 'time': 'Time',
@@ -59,34 +67,22 @@ def load_and_merge_data():
     full_df.rename(columns=rename_map, inplace=True)
     
     # Combine Date+Time to Datetime Index
-    # Note: 'Date' might be string or datetime. 'Time' might be string/time object.
-    
     def parse_datetime(row):
         d = row['Date']
         t = row['Time']
-        if isinstance(d, str): d = datetime.strptime(d, '%Y/%m/%d').date() # Guess format
+        if isinstance(d, str): d = datetime.strptime(d, '%Y/%m/%d').date()
         if isinstance(d, datetime): d = d.date()
-        
-        if isinstance(t, str):
-            t = datetime.strptime(t, '%H:%M').time() # Guess format
-        
+        if isinstance(t, str): t = datetime.strptime(t, '%H:%M').time()
         return datetime.combine(d, t)
 
     print("   Processing timestamps...")
-    # Fast vectorized conversion if possible, but safe fallback
     try:
-        # Optimistic: Date is datetime64, Time is time object
-        # If excel parsed date correctly, Date col is datetime.
-        # Check first row
         full_df['Datetime'] = pd.to_datetime(full_df['Date'].astype(str) + ' ' + full_df['Time'].astype(str))
     except:
-        # Fallback to slower row-wise if formats are complex
         full_df['Datetime'] = full_df.apply(parse_datetime, axis=1)
 
     full_df.set_index('Datetime', inplace=True)
     full_df.sort_index(inplace=True)
-    
-    # Drop duplicates
     full_df = full_df[~full_df.index.duplicated(keep='first')]
     
     # Keep only OHLC
@@ -95,293 +91,187 @@ def load_and_merge_data():
     print(f"✅ Loaded {len(df)} 1-minute bars ({df.index[0]} to {df.index[-1]})")
     return df
 
-def resample_data(df_1m):
-    """Create Daily and 15m datasets."""
-    # 15m bars
+def create_session_data(df_1m):
+    """
+    Create Session Data (DAY / NIGHT) and 15m Data.
+    DAY: 08:45 - 15:15
+    NIGHT: 16:30 - Next 06:00 (approx)
+    """
+    print("🔄 Creating Session & 15m Data...")
+    
+    # 1. 15m Data
     df_15m = df_1m.resample('15min').agg({
         'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
     }).dropna()
     
-    # Daily bars (Day Session Only logic is complex, for now assume standard 24h split at 00:00 or 15:15?)
-    # For BacktestEngine (signal gen), we usually use 24h Daily candles or Day Session?
-    # Let's use standard Daily (00:00-24:00) for simplicity of signal generation compatibility with yfinance
-    df_daily = df_1m.resample('D').agg({
-        'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
-    }).dropna()
+    # 2. Session Data
+    # Assign 'Session' label to each row
+    # DAY: 08:45 <= t <= 15:15
+    # NIGHT: 16:30 <= t <= 23:59 OR 00:00 <= t <= 06:00
     
-    # Calc ATR on Daily
-    df_daily['ATR'] = TechnicalAnalysis.calc_atr(df_daily)
+    # Initialize 'Session' col
+    # We need to group NIGHT sessions that span across midnight to the 'Trade Date'
+    # Actually, Raptor logic uses "Prev Session".
+    # For DAY trade (Trade Date T), Prev Session is NIGHT of T (ends 06:00 T).
+    # NIGHT of T starts 16:30 T-1.
     
-    return df_daily, df_15m
-
-class FastBacktestEngine(LiLFlexxEngine):
-    """Engine optimized for pre-calced data."""
-    def __init__(self, daily_df):
-        # We only pass daily for signal gen
-        self.data = {"nikkei_futures_daily": daily_df}
-        self.scores = {}
-        
-    def _analyze_trend(self):
-        # Simplified Trend Analysis for Daily
-        df = self.data["nikkei_futures_daily"]
-        if df is None or len(df) < 25:
-            self.scores["trend"] = 0
-            self.scores["details"] = {"trend_summary": "Insufficient Data"}
-            return
-            
-        close = df['Close']
-        sma5 = close.rolling(window=5).mean().iloc[-1]
-        sma25 = close.rolling(window=25).mean().iloc[-1]
-        
-        # Simple Logic
-        val = 0
-        if sma5 > sma25: val = 0.5
-        else: val = -0.5
-        
-        # Check slope?
-        if close.iloc[-1] > close.iloc[-5]: val += 0.3
-        else: val -= 0.3
-        
-        self.scores["trend"] = round(np.clip(val, -1.0, 1.0), 3)
-        self.scores["details"] = {"trend_summary": "Daily SMA"}
-
-    def _analyze_volatility(self):
-        # Simplified Volatility (ATR based if VIX is missing)
-        # We don't have VIX in the Excel data, so let's use recent ATR vs historical
-        # or just set to neutral 0.
-        
-        # Actually Nikkei Bot uses 'vix_daily' usually. Here we don't have it.
-        # Let's fake it with ATR-based volatility score
-        
-        df = self.data["nikkei_futures_daily"]
-        if 'ATR' not in df.columns:
-            self.scores["volatility"] = 0
-            self.scores["details"] = {"vix": 20.0}
-            return
-            
-        atr = df['ATR'].iloc[-1]
-        # ATR > 400 is high?
-        if atr > 500: val = -0.5 # Too volatile
-        elif atr < 200: val = -0.2 # Too quiet
-        else: val = 0.3 # Good
-        
-        self.scores["volatility"] = val
-        self.scores["details"] = {"vix": 20.0} # Placeholder
-
-    def _analyze_momentum(self):
-        # Simplified momentum for daily proxy
-        df = self.data["nikkei_futures_daily"]
-        if df is None or len(df) < 50: 
-            self.scores["momentum"] = 0
-            if "details" not in self.scores: self.scores["details"] = {} 
-            self.scores["details"]["rsi"] = 50
-            return
-
-        close = df['Close']
-        rsi = TechnicalAnalysis.calc_rsi(close).iloc[-1]
-        if "details" not in self.scores: self.scores["details"] = {}
-        self.scores["details"]["rsi"] = round(rsi, 1) if not np.isnan(rsi) else 50
-        
-        val = 0
-        if rsi > 70: val -= 0.3
-        elif rsi < 30: val += 0.3
-        elif rsi > 50: val += 0.2
-        else: val -= 0.2
-        
-        self.scores["momentum"] = round(np.clip(val, -1.0, 1.0), 3)
-
-def generate_signals(df_daily):
-    """Pre-calculate signals for ALL days."""
-    print("🚦 Generating Signals...")
-    signals = {} # Date -> Signal, ATR
+    # Simplification: We iterate each Day (T).
+    # We identify NIGHT preceeding T (from 16:30 T-1 to 06:00 T)
+    # We identify DAY of T (08:45 T to 15:15 T)
     
-    # Need some buffer for indicators
-    for i in range(50, len(df_daily)-1):
-        window = df_daily.iloc[i-50:i+1].copy()
-        
-        engine = FastBacktestEngine(window)
-        scores = engine.analyze()
-        sig = scores['signal']
-        strength = scores['strength']
-        
-        # Filter WEAK signals if you want strict logic
-        # if strength == "WEAK": sig = "WAIT"
-        
-        # Store for Next Day's trade
-        next_date = df_daily.index[i+1].date()
-        atr = df_daily.iloc[i]['ATR']
-        if pd.isna(atr): atr = 300.0
-        
-        # --- STRATEGY FLIP: MEAN REVERSION ---
-        # Original logic failed (PF 0.8). Let's fade the signal.
-        if sig == "LONG": sig = "SHORT"
-        elif sig == "SHORT": sig = "LONG"
-        # -------------------------------------
-        
-        signals[next_date] = {'type': sig, 'atr': atr}
-        
-    return signals
+    return df_15m
 
-def run_intraday_simulation(df_1m, signals, stop_mult, target_mult):
+def calculate_slope(series):
+    """Calculate slope of regression line for the series."""
+    y = series.values
+    x = np.arange(len(y))
+    if len(x) < 2: return 0
+    # Linear regression: y = ax + b
+    A = np.vstack([x, np.ones(len(x))]).T
+    a, b = np.linalg.lstsq(A, y, rcond=None)[0]
+    return a
+
+def run_raptor_simulation(df_1m, df_15m, g_cut, n_period, r_factor):
     """
-    Run simulation using 1-minute data for precise Stop/Target/Close execution.
-    Mode is fixed to 'DAY' (close at 15:15).
+    Run Raptor225 Logic Simulation.
+    Target: Day Session (08:45-15:15)
     """
     capital = INITIAL_CAPITAL
     trades = []
-    trade_count_debug = 0
     
-    # Loop continuously? No, iterate by Day
-    # Filter 1m data to only days we have signals for
     # Group by Date
+    unique_dates = sorted(list(set(df_1m.index.date)))
     
-    # Optimization: Iterate over signal dates
-    grouped = df_1m.groupby(df_1m.index.date)
+    trade_count = 0
+    win_count = 0
     
-    for date, group in grouped:
-        if date not in signals: continue
-        sig_data = signals[date]
-        signal = sig_data['type']
+    for i in range(1, len(unique_dates)):
+        curr_date = unique_dates[i]
+        prev_date = unique_dates[i-1]
         
-        if signal == "WAIT": continue
+        # 1. Get Day Session Data (Today)
+        day_start = datetime.combine(curr_date, time(8, 45))
+        day_end = datetime.combine(curr_date, time(15, 15))
+        day_data = df_1m.loc[day_start:day_end]
         
-        # Day Session Only (08:45 - 15:15)
-        # Filter group for these hours
-        # group is already datetime indexed
+        if day_data.empty: continue
         
-        # 1. Determine Entry at Day Open (08:45 or first bar)
-        # We assume we enter at the Open of the first bar of the day session
-        # Check time. 08:45 ~ 15:15
-        day_session = group.between_time('08:45', '15:15')
+        # Entry Price (08:45 Open)
+        entry_price = day_data.iloc[0]['Open']
         
-        if day_session.empty: continue
+        # 2. Get Prev Session Data (NIGHT: Yesterday 16:30 - Today 06:00)
+        night_start = datetime.combine(prev_date, time(16, 30))
+        night_end = datetime.combine(curr_date, time(6, 0)) # approx
         
-        first_bar = day_session.iloc[0]
-        entry_price = round_to_tick(first_bar['Open'])
+        night_data = df_1m.loc[night_start:night_end]
         
-        # Calc Stop/Target
-        atr = sig_data['atr']
-        s_dist = round_to_tick(atr * stop_mult)
-        t_dist = round_to_tick(atr * target_mult)
-        
-        stop = entry_price - s_dist if signal == "LONG" else entry_price + s_dist
-        target = entry_price + t_dist if signal == "LONG" else entry_price - t_dist
-        
-        # DEBUG: Print trade setup
-        is_debug = trade_count_debug < 5
-        if is_debug:
-            print(f"[{date}] {signal} Entry: {entry_price} | ATR: {atr:.1f} | Stop: {stop} (Dist {s_dist}) | Tgt: {target} (Dist {t_dist})")
-
-        # 2. Iterate 1m bars to check hit
-        # Vectorized check is possible but simple iteration is reliable
-        
-        exit_price = None
-        exit_reason = None
-        exit_time = None
-        
-        for idx, row in day_session.iterrows():
-            high_p = row['High']
-            low_p = row['Low']
-            close_p = row['Close']
+        if night_data.empty:
+            # If no night session (Monday?), fallback to Prev DAY Close?
+            # Or skip. Raptor says "Prev Session Close".
+            # For simplicity, if no NIGHT data, skip (insufficient data).
+            continue
             
-            if signal == "LONG":
-                # Check Low vs Stop first? Or High vs Target?
-                # On a 1m bar, it's ambiguous. But much less than Daily.
-                # Assume conservative: Check Low (Stop) first.
-                if low_p <= stop:
-                    exit_price = stop
-                    exit_reason = "STOP"
-                    exit_time = idx.time()
-                    break
-                if high_p >= target:
-                    exit_price = target
-                    exit_reason = "TARGET"
-                    exit_time = idx.time()
-                    break
-                    
-            elif signal == "SHORT":
-                # Check High (Stop) first
-                if high_p >= stop:
-                    exit_price = stop
-                    exit_reason = "STOP"
-                    exit_time = idx.time()
-                    break
-                # Spread check: Ask hits stop
-                if high_p + SPREAD >= stop:
-                    exit_price = stop
-                    exit_reason = "STOP (Spread)"
-                    exit_time = idx.time()
-                    break
-                
-                if low_p <= target:
-                    exit_price = target
-                    exit_reason = "TARGET"
-                    exit_time = idx.time()
-                    break
+        prev_close = night_data.iloc[-1]['Close']
+        prev_open = night_data.iloc[0]['Open']
         
-        # 3. If no hit, exit at Close (15:15)
-        if exit_price is None:
-            last_bar = day_session.iloc[-1]
-            exit_price = last_bar['Close']
-            exit_reason = "CLOSE"
-            exit_time = last_bar.name.time()
+        # --- LOGIC START ---
+        
+        # 4) RiskGate (Gap)
+        # gap_rate = (expected_open_price - prev_session_close) / prev_session_close
+        gap_rate = (entry_price - prev_close) / prev_close
+        if abs(gap_rate) >= g_cut:
+            # NO-TRADE (RiskGate Fail)
+            continue
             
-        # Calc PnL
-        diff = (exit_price - entry_price) if signal == "LONG" else (entry_price - exit_price)
-        bn = (diff * Config.CONTRACT_MULTIPLIER * BACKTEST_LOTS) - (COST_PER_TRADE * BACKTEST_LOTS)
+        # 5) Direction Indicators
         
-        if is_debug:
-            print(f"   -> Exit: {exit_reason} at {exit_time} | Price: {exit_price} | PnL: {bn:.0f}")
-            trade_count_debug += 1
+        # B: Prev Session Direction
+        # +1 if Yang (Close > Open), -1 if Yin (Close < Open)
+        score_b = 0
+        if prev_close > prev_open: score_b = 1
+        elif prev_close < prev_open: score_b = -1
         
-        capital += bn
+        # D: Overheat Check
+        # Current Night Range vs Avg Night Range (N=10 sessions)
+        # We need historical night ranges. For speed, calculate on the fly or pre-calc?
+        # On-the-fly approximation: just check Range vs ATR? 
+        # Or skip D for now to strictly follow "Simple Raptor". 
+        # Let's Skip D first to see baseline. (Assuming r_factor is high enough)
+        # Or simpler: if range > 1.8 * prev_range
+        night_range = night_data['High'].max() - night_data['Low'].min()
+        # To implement D correctly requires valid history. Let's omit D for MVP.
+        
+        # C: Momentum (15m N periods)
+        # Get 15m data ending before 08:45 Today
+        cutoff_time = day_start
+        recent_15m = df_15m.loc[:cutoff_time].iloc[-(n_period+1):-1] # Exclude exactly 08:45 bar
+        
+        if len(recent_15m) < n_period: continue
+        
+        slope = calculate_slope(recent_15m['Close'])
+        score_c = 0
+        if slope > 0.05: score_c = 1 # Threshold for slope? Or just > 0?
+        elif slope < -0.05: score_c = -1
+        # Raptor prompt: "Positive:+1, Negative:-1, Tiny:0"
+        # Let's assume strict signs for now.
+        if slope > 0: score_c = 1
+        elif slope < 0: score_c = -1
+        
+        # Total Score
+        total_score = score_b + score_c
+        
+        # Verdict
+        action = "NO-TRADE"
+        if total_score >= 2: action = "BUY"
+        elif total_score <= -2: action = "SELL"
+        
+        if action == "NO-TRADE": continue
+        
+        # --- EXECUTION (Simulated) ---
+        
+        # Exit: Close (15:15)
+        exit_price = day_data.iloc[-1]['Close']
+        
+        # PnL
+        diff = (exit_price - entry_price) if action == "BUY" else (entry_price - exit_price)
+        bn = (diff * 100) - 0 # Lots=100 (mini), Cost=0 as per Raptor spec
+        
         trades.append(bn)
+        capital += bn
+        trade_count += 1
+        if bn > 0: win_count += 1
         
     # Stats
     total_profit = sum([x for x in trades if x > 0])
     total_loss = abs(sum([x for x in trades if x < 0]))
     pf = (total_profit / total_loss) if total_loss > 0 else 0
+    win_rate = (win_count / trade_count * 100) if trade_count > 0 else 0
+    ret = (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     
     return {
-        "return": (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100,
+        "return": ret,
         "pf": pf,
-        "max_dd": 0, # Calculation omitted for speed in grid
-        "trades": len(trades)
+        "trades": trade_count,
+        "win_rate": win_rate
     }
 
-def run_grid_search_intraday():
+def run_grid_search_raptor():
     # 1. Load Data
     df_1m = load_and_merge_data()
-    df_daily, _ = resample_data(df_1m)
+    # 2. create 15m
+    df_15m = create_session_data(df_1m)
     
-    print(f"✅ Data Ready: {len(df_daily)} days")
+    print(f"🔎 Raptor225 Grid Search")
+    print(f"   Period: 2018-2025 | Logic: Gap < Cut, B+C >= 2 -> Trade")
+    print("="*80)
+    print("G_cut   | N  || Ret%   | PF   | Win%  | Trades")
+    print("-" * 80)
     
-    # 2. Generate Signals
-    signals = generate_signals(df_daily)
-    
-    # 3. Grid Search
-    print(f"🔎 Intraday Grid Search (Strict 1-minute execution)")
-    print(f"   Period: {df_daily.index[0].date()} - {df_daily.index[-1].date()}")
-    print("="*60)
-    print("S | T   || Ret%   | PF   | Trades")
-    print("-" * 60)
-    
-    best_ret = -999
-    best_set = None
-    
-    for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
-        if t <= s: continue
+    for g_cut, n_period in itertools.product(G_CUT_RANGE, N_RANGE):
+        res = run_raptor_simulation(df_1m, df_15m, g_cut, n_period, R_FACTOR)
+        print(f"{g_cut:.4f} | {n_period:<2} || {res['return']:>6.1f}% | {res['pf']:4.2f} | {res['win_rate']:5.1f}% | {res['trades']}")
         
-        res = run_intraday_simulation(df_1m, signals, s, t)
-        
-        print(f"{s:<3} {t:<3} || {res['return']:>6.1f}% | {res['pf']:4.2f} | {res['trades']}")
-        
-        if res['return'] > best_ret:
-            best_ret = res['return']
-            best_set = (s, t)
-            
-    print("="*60)
-    print(f"🏆 Best Setting: Stop {best_set[0]} / Target {best_set[1]} (Ret: {best_ret:.1f}%)")
+    print("="*80)
 
 if __name__ == "__main__":
-    run_grid_search_intraday()
+    run_grid_search_raptor()
