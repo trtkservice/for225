@@ -169,46 +169,17 @@ def run_simulation(nikkei, vix, stop_mult, target_mult, mode="SWING"):
                 # BUT, wait, "signal" is for next entry. 
                 # If we close here, we fall through to "if position: continue" check?
                 # No, we set position = None, so it proceeds to enter new position below.
+                
+                # Correction: If we reverse, we need to enter IMMEDIATELY at Next Open.
+                # So we cannot just set position=None and fall through, because fall-through logic is "normal entry".
+                # We should handle re-entry here or use a flag.
+                # Simplest: Close here, and let the normal entry logic below pick it up 
+                # because we set position = None.
+                pass
 
         if position: continue
         
         if signal == "WAIT": continue
-        
-        # ... (Entry Logic continues) ...
-
-# ... (Update run_grid_search) ...
-    print(f"🔎 Comparative Search: DAY vs DOTEN vs SWING")
-    print(f"   Period: {months:.1f} months")
-    print("="*130)
-    print(f"STOP |TGT  || DAY RET    (Win%) [Avg/Mo] || DOTEN RET  (Win%) [Avg/Mo] || SWING RET")
-    print("-" * 130)
-    
-    for s, t in itertools.product(STOP_RANGE, TARGET_RANGE):
-        if t <= s: continue 
-        
-        # Run DAY
-        cap_d, trds_d = run_simulation(nikkei, vix, s, t, mode="DAY")
-        ret_d = (cap_d - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        win_d = (len([x for x in trds_d if x > 0])/len(trds_d)*100) if trds_d else 0
-        avg_d = (cap_d - INITIAL_CAPITAL) / months
-        
-        # Run DOTEN
-        # DOTEN ignores Target, but we pass 't' anyway (it won't use it except for calc)
-        cap_o, trds_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
-        ret_o = (cap_o - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        win_o = (len([x for x in trds_o if x > 0])/len(trds_o)*100) if trds_o else 0
-        avg_o = (cap_o - INITIAL_CAPITAL) / months
-
-        # Run SWING (Reference)
-        cap_s, trds_s = run_simulation(nikkei, vix, s, t, mode="SWING")
-        ret_s = (cap_s - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
-        
-        # Highlight winner
-        winner = "DAY  " if ret_d >= ret_o else "DOTEN"
-        
-        # Print results
-        print(f"  {s:<4}|{t:<4}|| {ret_d:>+8.1f}% ({win_d:>4.1f}%) [{avg_d:>+6.0f}] || {ret_o:>+8.1f}% ({win_o:>4.1f}%) [{avg_o:>+6.0f}] || {ret_s:>+6.1f}% {winner}")
-    print("="*130)
         
         # 3. Enter Next Open
         next_day = daily_records[i+1]
@@ -269,7 +240,6 @@ def run_grid_search():
         avg_d = (cap_d - INITIAL_CAPITAL) / months
         
         # Run DOTEN
-        # DOTEN ignores Target, but we pass 't' anyway (it won't use it except for calc)
         cap_o, trds_o = run_simulation(nikkei, vix, s, t, mode="DOTEN")
         ret_o = (cap_o - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
         win_o = (len([x for x in trds_o if x > 0])/len(trds_o)*100) if trds_o else 0
