@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """
-Raptor225 Backtest
-==================
-楽天証券 / 資金10万円 / 日経225マイクロ1枚 / デイトレード
-
-セッション構成:
-  - DAY:   08:45〜15:15 (直前セッション = 前日NIGHT)
-  - NIGHT: 16:30〜翌06:00 (直前セッション = 同日DAY)
+Raptor225 Backtest - NIGHT診断版
+=================================
+NIGHTセッションがなぜ負けるのかを徹底調査
 """
 
 import pandas as pd
@@ -27,20 +23,14 @@ warnings.filterwarnings('ignore')
 # ============================================================
 @dataclass
 class Config:
-    """バックテスト設定"""
-    # 資金・ロット
     capital: int = 100_000
     lots: int = 1
-    multiplier: int = 10  # 1ポイント = 10円
-    commission: int = 22  # 往復手数料
-    tick: int = 5         # 呼値
-    
-    # Raptorロジック
-    gap_threshold: float = 0.0025  # 0.25%
+    multiplier: int = 10
+    commission: int = 22
+    tick: int = 5
+    gap_threshold: float = 0.0025
     stop_atr: float = 1.0
     target_atr: float = 2.0
-    
-    # セッション時刻
     day_open: time = time(8, 45)
     day_close: time = time(15, 15)
     night_open: time = time(16, 30)
@@ -50,16 +40,11 @@ class Config:
 CFG = Config()
 
 
-# ============================================================
-# ユーティリティ
-# ============================================================
 def tick_round(price: float) -> int:
-    """5円刻みに丸める"""
     return int(round(price / CFG.tick) * CFG.tick)
 
 
 def calc_slope(closes: pd.Series) -> float:
-    """終値の回帰傾き"""
     n = len(closes)
     if n < 2:
         return 0.0
@@ -68,337 +53,299 @@ def calc_slope(closes: pd.Series) -> float:
     return float(np.polyfit(x, y, 1)[0])
 
 
-# ============================================================
-# データ読み込み
-# ============================================================
 def load_excel_data() -> pd.DataFrame:
-    """N225minif_*.xlsx を読み込み"""
     base = os.path.dirname(os.path.abspath(__file__))
     files = sorted(glob.glob(os.path.join(base, "N225minif_*.xlsx")))
     
     if not files:
-        print("❌ N225minif_*.xlsx が見つかりません")
         sys.exit(1)
     
     print(f"📥 {len(files)}ファイル読み込み中...")
-    
-    dfs = []
-    for f in files:
-        print(f"   {os.path.basename(f)}")
-        dfs.append(pd.read_excel(f))
+    dfs = [pd.read_excel(f) for f in files]
     
     df = pd.concat(dfs, ignore_index=True)
-    
-    # カラム名を統一
     df.rename(columns={
         '日付': 'Date', '時間': 'Time', '時刻': 'Time',
         '始値': 'Open', '高値': 'High', '安値': 'Low', '終値': 'Close'
     }, inplace=True)
     
-    # Datetime インデックス化
     df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
     df = df.set_index('Datetime').sort_index()
     df = df[~df.index.duplicated(keep='first')]
     df = df[['Open', 'High', 'Low', 'Close']].astype(float)
     
-    print(f"✅ {len(df):,}本 ({df.index[0]} 〜 {df.index[-1]})")
+    print(f"✅ {len(df):,}本")
+    
+    # 直近3年に絞る
+    df = df[df.index >= '2023-01-01']
+    print(f"📅 2023年以降: {len(df):,}本")
+    
     return df
 
 
-def prepare_data(df_1m: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """15分足とATRを準備"""
-    # 15分足
+def prepare_data(df_1m):
     df_15m = df_1m.resample('15min').agg({
         'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
     }).dropna()
     
-    # 日足ATR (14日平均レンジ)
     df_daily = df_1m.resample('D').agg({'High': 'max', 'Low': 'min'}).dropna()
     df_daily['ATR'] = (df_daily['High'] - df_daily['Low']).rolling(14).mean()
     
     return df_15m, df_daily
 
 
-# ============================================================
-# セッション処理
-# ============================================================
-@dataclass
-class Session:
-    """セッション情報"""
-    name: str
-    open_time: datetime
-    close_time: datetime
-    prev_open: datetime
-    prev_close: datetime
-
-
-def get_day_session(date) -> Session:
-    """DAYセッション情報を取得"""
-    yesterday = date - timedelta(days=1)
-    return Session(
-        name='DAY',
-        open_time=datetime.combine(date, CFG.day_open),
-        close_time=datetime.combine(date, CFG.day_close),
-        prev_open=datetime.combine(yesterday, CFG.night_open),
-        prev_close=datetime.combine(date, CFG.night_close)
-    )
-
-
-def get_night_session(date) -> Session:
-    """NIGHTセッション情報を取得"""
-    tomorrow = date + timedelta(days=1)
-    return Session(
-        name='NIGHT',
-        open_time=datetime.combine(date, CFG.night_open),
-        close_time=datetime.combine(tomorrow, CFG.night_close),
-        prev_open=datetime.combine(date, CFG.day_open),
-        prev_close=datetime.combine(date, CFG.day_close)
-    )
-
-
-def get_session_ohlc(df: pd.DataFrame, start: datetime, end: datetime) -> Optional[Dict]:
-    """セッションのOHLC取得"""
-    data = df.loc[start:end]
-    if data.empty or len(data) < 100:
-        return None
-    return {
-        'open': data.iloc[0]['Open'],
-        'high': data['High'].max(),
-        'low': data['Low'].min(),
-        'close': data.iloc[-1]['Close'],
-        'data': data
-    }
-
-
-# ============================================================
-# Raptorロジック
-# ============================================================
-def get_raptor_signal(prev_ohlc: Dict, slope: float) -> Optional[str]:
-    """
-    Raptorシグナル判定
-    
-    B: 直前セッションの方向 (陽線+1, 陰線-1)
-    C: モメンタム傾き (正+1, 負-1)
-    
-    B + C >= +2 → BUY
-    B + C <= -2 → SELL
-    """
-    # B: 直前セッションの方向
-    if prev_ohlc['close'] > prev_ohlc['open']:
-        score_b = 1
-    elif prev_ohlc['close'] < prev_ohlc['open']:
-        score_b = -1
-    else:
-        score_b = 0
-    
-    # C: モメンタム
+def get_signal(prev_close, prev_open, slope):
+    score_b = 1 if prev_close > prev_open else -1 if prev_close < prev_open else 0
     score_c = 1 if slope > 0 else -1
-    
     total = score_b + score_c
     
     if total >= 2:
-        return 'BUY'
+        return 'BUY', score_b, score_c
     elif total <= -2:
-        return 'SELL'
-    return None
+        return 'SELL', score_b, score_c
+    return None, score_b, score_c
 
 
-def execute_trade(
-    session_data: pd.DataFrame,
-    action: str,
-    entry: int,
-    stop: int,
-    target: int
-) -> Tuple[int, str]:
-    """
-    トレード実行
-    
-    Returns:
-        (exit_price, reason)
-        reason: 'TARGET', 'STOP', 'CLOSE'
-    """
+def execute_trade(session_data, action, entry, stop, target):
     for _, bar in session_data.iterrows():
         if action == 'BUY':
             if bar['Low'] <= stop:
                 return stop, 'STOP'
             if bar['High'] >= target:
                 return target, 'TARGET'
-        else:  # SELL
+        else:
             if bar['High'] >= stop:
                 return stop, 'STOP'
             if bar['Low'] <= target:
                 return target, 'TARGET'
     
-    # セッション終了時決済
     return tick_round(session_data.iloc[-1]['Close']), 'CLOSE'
 
 
-# ============================================================
-# バックテスト本体
-# ============================================================
-def process_session(
-    session: Session,
-    df_1m: pd.DataFrame,
-    df_15m: pd.DataFrame,
-    df_daily: pd.DataFrame
-) -> Optional[Dict]:
-    """1セッションを処理"""
-    
-    # 直前セッションデータ取得
-    prev = get_session_ohlc(df_1m, session.prev_open, session.prev_close)
-    if prev is None:
-        return None
-    
-    # 当セッションデータ取得
-    curr = get_session_ohlc(df_1m, session.open_time, session.close_time)
-    if curr is None:
-        return None
-    
-    # エントリー価格
-    entry = tick_round(curr['data'].iloc[0]['Open'])
-    
-    # ギャップチェック
-    gap = abs(entry - prev['close']) / prev['close']
-    if gap >= CFG.gap_threshold:
-        return None
-    
-    # モメンタム計算
-    prev_15m = df_15m.loc[session.prev_open:session.prev_close]
-    if len(prev_15m) < 10:
-        return None
-    
-    slope = calc_slope(prev_15m['Close'])
-    
-    # シグナル判定
-    action = get_raptor_signal(prev, slope)
-    if action is None:
-        return None
-    
-    # ATR取得
-    atr_date = session.prev_close.date()
-    try:
-        atr = df_daily.loc[:str(atr_date)]['ATR'].iloc[-1]
-        if pd.isna(atr) or atr <= 0:
-            atr = 400
-    except:
-        atr = 400
-    
-    # Stop/Target計算
-    s_dist = tick_round(atr * CFG.stop_atr)
-    t_dist = tick_round(atr * CFG.target_atr)
-    
-    if action == 'BUY':
-        stop = entry - s_dist
-        target = entry + t_dist
-    else:
-        stop = entry + s_dist
-        target = entry - t_dist
-    
-    # トレード実行
-    exit_price, reason = execute_trade(curr['data'], action, entry, stop, target)
-    
-    # 損益計算
-    diff = (exit_price - entry) if action == 'BUY' else (entry - exit_price)
-    pnl = diff * CFG.multiplier * CFG.lots - CFG.commission
-    
-    return {
-        'date': session.open_time.date(),
-        'session': session.name,
-        'action': action,
-        'entry': entry,
-        'exit': exit_price,
-        'pnl': pnl,
-        'reason': reason
-    }
-
-
-def run_backtest(df_1m: pd.DataFrame) -> List[Dict]:
-    """バックテスト実行"""
+def run_diagnosis(df_1m):
     df_15m, df_daily = prepare_data(df_1m)
     dates = sorted(set(df_1m.index.date))
     
-    trades = []
+    day_trades = []
+    night_trades = []
     
-    print(f"\n🚀 バックテスト開始 ({len(dates)}日)")
-    print(f"   マイクロ{CFG.lots}枚, Stop {CFG.stop_atr} ATR, Target {CFG.target_atr} ATR")
-    print("-" * 70)
+    # 診断用サンプル (2025年12月のNIGHT)
+    diag_samples = []
     
     for date in dates:
-        # DAYセッション
-        day = get_day_session(date)
-        result = process_session(day, df_1m, df_15m, df_daily)
-        if result:
-            trades.append(result)
-            if len(trades) <= 5:
-                print(f"  #{len(trades)} {result['date']} DAY {result['action']} "
-                      f"{result['entry']}→{result['exit']} PnL={result['pnl']:+,.0f}")
+        # ========== DAYセッション ==========
+        yesterday = date - timedelta(days=1)
+        prev_start = datetime.combine(yesterday, CFG.night_open)
+        prev_end = datetime.combine(date, CFG.night_close)
+        session_start = datetime.combine(date, CFG.day_open)
+        session_end = datetime.combine(date, CFG.day_close)
         
-        # NIGHTセッション
-        night = get_night_session(date)
-        result = process_session(night, df_1m, df_15m, df_daily)
-        if result:
-            trades.append(result)
-            if len(trades) <= 5:
-                print(f"  #{len(trades)} {result['date']} NIGHT {result['action']} "
-                      f"{result['entry']}→{result['exit']} PnL={result['pnl']:+,.0f}")
+        prev_data = df_1m.loc[prev_start:prev_end]
+        session_data = df_1m.loc[session_start:session_end]
+        
+        if len(prev_data) >= 100 and len(session_data) >= 100:
+            prev_open = prev_data.iloc[0]['Open']
+            prev_close = prev_data.iloc[-1]['Close']
+            entry = tick_round(session_data.iloc[0]['Open'])
+            
+            gap = abs(entry - prev_close) / prev_close
+            if gap < CFG.gap_threshold:
+                prev_15m = df_15m.loc[prev_start:prev_end]
+                if len(prev_15m) >= 10:
+                    slope = calc_slope(prev_15m['Close'])
+                    action, b, c = get_signal(prev_close, prev_open, slope)
+                    
+                    if action:
+                        try:
+                            atr = df_daily.loc[:str(yesterday)]['ATR'].iloc[-1]
+                            if pd.isna(atr) or atr <= 0:
+                                atr = 400
+                        except:
+                            atr = 400
+                        
+                        s_dist = tick_round(atr * CFG.stop_atr)
+                        t_dist = tick_round(atr * CFG.target_atr)
+                        
+                        if action == 'BUY':
+                            stop, target = entry - s_dist, entry + t_dist
+                        else:
+                            stop, target = entry + s_dist, entry - t_dist
+                        
+                        exit_price, reason = execute_trade(session_data, action, entry, stop, target)
+                        diff = (exit_price - entry) if action == 'BUY' else (entry - exit_price)
+                        pnl = diff * CFG.multiplier * CFG.lots - CFG.commission
+                        
+                        # 実際の値動き
+                        actual_move = session_data.iloc[-1]['Close'] - session_data.iloc[0]['Open']
+                        
+                        day_trades.append({
+                            'date': date, 'action': action, 'pnl': pnl, 'reason': reason,
+                            'b': b, 'c': c, 'slope': slope,
+                            'prev_move': prev_close - prev_open,
+                            'actual_move': actual_move,
+                            'signal_correct': (action == 'BUY' and actual_move > 0) or (action == 'SELL' and actual_move < 0)
+                        })
+        
+        # ========== NIGHTセッション ==========
+        tomorrow = date + timedelta(days=1)
+        prev_start = datetime.combine(date, CFG.day_open)
+        prev_end = datetime.combine(date, CFG.day_close)
+        session_start = datetime.combine(date, CFG.night_open)
+        session_end = datetime.combine(tomorrow, CFG.night_close)
+        
+        prev_data = df_1m.loc[prev_start:prev_end]
+        session_data = df_1m.loc[session_start:session_end]
+        
+        if len(prev_data) >= 100 and len(session_data) >= 100:
+            prev_open = prev_data.iloc[0]['Open']
+            prev_close = prev_data.iloc[-1]['Close']
+            entry = tick_round(session_data.iloc[0]['Open'])
+            
+            gap = abs(entry - prev_close) / prev_close
+            if gap < CFG.gap_threshold:
+                prev_15m = df_15m.loc[prev_start:prev_end]
+                if len(prev_15m) >= 10:
+                    slope = calc_slope(prev_15m['Close'])
+                    action, b, c = get_signal(prev_close, prev_open, slope)
+                    
+                    if action:
+                        try:
+                            atr = df_daily.loc[:str(date)]['ATR'].iloc[-1]
+                            if pd.isna(atr) or atr <= 0:
+                                atr = 400
+                        except:
+                            atr = 400
+                        
+                        s_dist = tick_round(atr * CFG.stop_atr)
+                        t_dist = tick_round(atr * CFG.target_atr)
+                        
+                        if action == 'BUY':
+                            stop, target = entry - s_dist, entry + t_dist
+                        else:
+                            stop, target = entry + s_dist, entry - t_dist
+                        
+                        exit_price, reason = execute_trade(session_data, action, entry, stop, target)
+                        diff = (exit_price - entry) if action == 'BUY' else (entry - exit_price)
+                        pnl = diff * CFG.multiplier * CFG.lots - CFG.commission
+                        
+                        actual_move = session_data.iloc[-1]['Close'] - session_data.iloc[0]['Open']
+                        
+                        night_trades.append({
+                            'date': date, 'action': action, 'pnl': pnl, 'reason': reason,
+                            'b': b, 'c': c, 'slope': slope,
+                            'prev_move': prev_close - prev_open,
+                            'actual_move': actual_move,
+                            'signal_correct': (action == 'BUY' and actual_move > 0) or (action == 'SELL' and actual_move < 0)
+                        })
+                        
+                        # 2025年12月のサンプル
+                        if date.year == 2025 and date.month == 12:
+                            diag_samples.append({
+                                'date': date,
+                                'prev_open': prev_open,
+                                'prev_close': prev_close,
+                                'prev_move': prev_close - prev_open,
+                                'slope': slope,
+                                'b': b, 'c': c,
+                                'action': action,
+                                'entry': entry,
+                                'exit': exit_price,
+                                'actual_move': actual_move,
+                                'pnl': pnl,
+                                'signal_correct': (action == 'BUY' and actual_move > 0) or (action == 'SELL' and actual_move < 0)
+                            })
     
-    return trades
-
-
-def print_results(trades: List[Dict]):
-    """結果出力"""
-    print("-" * 70)
+    # ========== 分析出力 ==========
+    print("\n" + "=" * 80)
+    print("📊 DAY vs NIGHT 詳細比較")
+    print("=" * 80)
     
-    if not trades:
-        print("⚠️ トレードなし")
-        return
+    df_day = pd.DataFrame(day_trades) if day_trades else pd.DataFrame()
+    df_night = pd.DataFrame(night_trades) if night_trades else pd.DataFrame()
     
-    df = pd.DataFrame(trades)
+    print(f"\n【基本統計】")
+    print(f"{'':15} {'DAY':>15} {'NIGHT':>15}")
+    print("-" * 50)
+    print(f"{'トレード数':15} {len(df_day):>15} {len(df_night):>15}")
     
-    # 統計
-    total = len(df)
-    wins = len(df[df['pnl'] > 0])
-    win_rate = wins / total * 100
+    if len(df_day) > 0:
+        day_wins = len(df_day[df_day['pnl'] > 0])
+        day_winrate = day_wins / len(df_day) * 100
+        day_pnl = df_day['pnl'].sum()
+        day_avg = df_day['pnl'].mean()
+        day_correct = df_day['signal_correct'].sum() / len(df_day) * 100
+    else:
+        day_winrate = day_pnl = day_avg = day_correct = 0
     
-    gross_win = df[df['pnl'] > 0]['pnl'].sum()
-    gross_loss = abs(df[df['pnl'] <= 0]['pnl'].sum())
-    pf = gross_win / gross_loss if gross_loss > 0 else float('inf')
+    if len(df_night) > 0:
+        night_wins = len(df_night[df_night['pnl'] > 0])
+        night_winrate = night_wins / len(df_night) * 100
+        night_pnl = df_night['pnl'].sum()
+        night_avg = df_night['pnl'].mean()
+        night_correct = df_night['signal_correct'].sum() / len(df_night) * 100
+    else:
+        night_winrate = night_pnl = night_avg = night_correct = 0
     
-    total_pnl = df['pnl'].sum()
-    final_capital = CFG.capital + total_pnl
-    monthly = total_pnl / 96  # 約8年
+    print(f"{'勝率':15} {day_winrate:>14.1f}% {night_winrate:>14.1f}%")
+    print(f"{'シグナル正解率':15} {day_correct:>14.1f}% {night_correct:>14.1f}%")
+    print(f"{'総損益':15} {'¥'+f'{day_pnl:+,.0f}':>14} {'¥'+f'{night_pnl:+,.0f}':>14}")
+    print(f"{'平均損益':15} {'¥'+f'{day_avg:+,.0f}':>14} {'¥'+f'{night_avg:+,.0f}':>14}")
     
-    day_trades = len(df[df['session'] == 'DAY'])
-    night_trades = len(df[df['session'] == 'NIGHT'])
+    # シグナル方向ごとの分析
+    print(f"\n【シグナル方向別】")
+    for session_name, df in [('DAY', df_day), ('NIGHT', df_night)]:
+        if len(df) == 0:
+            continue
+        print(f"\n{session_name}:")
+        for action in ['BUY', 'SELL']:
+            sub = df[df['action'] == action]
+            if len(sub) > 0:
+                wins = len(sub[sub['pnl'] > 0])
+                correct = sub['signal_correct'].sum()
+                avg_pnl = sub['pnl'].mean()
+                print(f"  {action}: {len(sub)}回, 勝率{wins/len(sub)*100:.1f}%, 正解率{correct/len(sub)*100:.1f}%, 平均¥{avg_pnl:+,.0f}")
     
-    print(f"\n📊 結果")
-    print("=" * 70)
-    print(f"  期間        : {df['date'].min()} 〜 {df['date'].max()}")
-    print(f"  トレード数  : {total}回 (DAY:{day_trades} NIGHT:{night_trades})")
-    print(f"  勝率        : {win_rate:.1f}% ({wins}勝 {total-wins}敗)")
-    print(f"  PF          : {pf:.2f}")
-    print("=" * 70)
-    print(f"  最終資金    : ¥{final_capital:,.0f}")
-    print(f"  純損益      : ¥{total_pnl:+,.0f}")
-    print(f"  リターン    : {(final_capital - CFG.capital) / CFG.capital * 100:+.1f}%")
-    print(f"  月平均      : ¥{monthly:+,.0f}")
-    print("=" * 70)
+    # 2025年12月のNIGHTサンプル
+    print(f"\n【2025年12月 NIGHTサンプル】")
+    print("-" * 100)
+    for s in diag_samples:
+        direction_match = "✅" if s['signal_correct'] else "❌"
+        print(f"{s['date']} | DAY動き:{s['prev_move']:+.0f} → B={s['b']:+d} | "
+              f"Slope:{s['slope']:+.2f} → C={s['c']:+d} | "
+              f"Signal:{s['action']} | NIGHT動き:{s['actual_move']:+.0f} {direction_match} | "
+              f"PnL:¥{s['pnl']:+,.0f}")
     
-    # 決済理由
-    reason_counts = df['reason'].value_counts()
-    print(f"\n📈 決済理由:")
-    for reason, count in reason_counts.items():
-        print(f"  {reason}: {count}回 ({count/total*100:.1f}%)")
-
-
-# ============================================================
-# メイン
-# ============================================================
-def main():
-    df_1m = load_excel_data()
-    trades = run_backtest(df_1m)
-    print_results(trades)
+    # 核心的な問題
+    print(f"\n{'='*80}")
+    print("🔍 核心的な問題の特定")
+    print("=" * 80)
+    
+    if len(df_night) > 0:
+        # NIGHTでBUYした時、実際に上がったか？
+        night_buy = df_night[df_night['action'] == 'BUY']
+        night_sell = df_night[df_night['action'] == 'SELL']
+        
+        if len(night_buy) > 0:
+            buy_up = len(night_buy[night_buy['actual_move'] > 0])
+            print(f"  NIGHT BUY時に実際に上昇: {buy_up}/{len(night_buy)} ({buy_up/len(night_buy)*100:.1f}%)")
+        
+        if len(night_sell) > 0:
+            sell_down = len(night_sell[night_sell['actual_move'] < 0])
+            print(f"  NIGHT SELL時に実際に下落: {sell_down}/{len(night_sell)} ({sell_down/len(night_sell)*100:.1f}%)")
+        
+        # DAYのトレンドがNIGHTに続くか？
+        print(f"\n  DAYトレンド → NIGHT継続率:")
+        day_up_night_up = len(df_night[(df_night['prev_move'] > 0) & (df_night['actual_move'] > 0)])
+        day_up = len(df_night[df_night['prev_move'] > 0])
+        day_down_night_down = len(df_night[(df_night['prev_move'] < 0) & (df_night['actual_move'] < 0)])
+        day_down = len(df_night[df_night['prev_move'] < 0])
+        
+        if day_up > 0:
+            print(f"    DAY↑ → NIGHT↑: {day_up_night_up}/{day_up} ({day_up_night_up/day_up*100:.1f}%)")
+        if day_down > 0:
+            print(f"    DAY↓ → NIGHT↓: {day_down_night_down}/{day_down} ({day_down_night_down/day_down*100:.1f}%)")
 
 
 if __name__ == "__main__":
-    main()
+    df = load_excel_data()
+    run_diagnosis(df)
