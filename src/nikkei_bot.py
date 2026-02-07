@@ -2,9 +2,24 @@
 """
 Raptor225 Trading Bot
 =====================
-楽天証券 / 資金10万円 / 日経225マイクロ1枚 / デイトレード
+Raptor内部プロンプトと完全一致する判定ロジック
 
-GitHub Actionsから毎日実行され、シグナルをLINEに通知する。
+判定ロジック:
+- B: 直前セッションの実体方向 (陽線+1, 陰線-1, 同値0)
+- C: 直近15M 32本の回帰傾き (正+1, 負-1, 微小0)
+- D: 過熱判定 (直前レンジ >= 直近10セッション平均×1.8 なら B→0へ弱める)
+- TotalScore = B + C
+- TotalScore >= +2 → BUY
+- TotalScore <= -2 → SELL
+- それ以外 → NO-TRADE
+
+ギャップ:
+- gap_rate = |entry - prev_close| / prev_close
+- |gap_rate| >= 0.25% → NO-TRADE (RiskGate)
+
+セッション時刻:
+- DAY: 08:45開始, 15:45終了
+- NIGHT: 16:30開始, 06:00終了
 """
 
 import os
@@ -29,37 +44,45 @@ class Config:
     CAPITAL = 100_000      # 資金10万円
     LOTS = 1               # マイクロ1枚
     MULTIPLIER = 10        # 1ポイント = 10円
-    COMMISSION = 22        # 往復手数料
+    COMMISSION = 0         # Raptor準拠: cost=0
     TICK = 5               # 呼値
     
-    # Raptorロジック
-    GAP_CUT = 0.0025       # ギャップ閾値 0.25%
-    STOP_MULT = 1.0        # ストップ = 1.0 ATR
-    TARGET_MULT = 2.0      # ターゲット = 2.0 ATR
+    # Raptorパラメータ
+    G_CUT = 0.0025         # ギャップ閾値 0.25%
+    N_MOMENTUM = 32        # モメンタム計算に使う15分足の本数
+    R_OVERHEAT = 1.8       # 過熱判定倍率
+    SLOPE_THRESHOLD = 0.5  # 傾きがこれ以下なら「微小」→ C=0
+    
+    # セッション時刻
+    DAY_OPEN = time(8, 45)
+    DAY_CLOSE = time(15, 45)   # Raptor準拠: 15:45
+    NIGHT_OPEN = time(16, 30)
+    NIGHT_CLOSE = time(6, 0)
     
     # データファイル
     DATA_FILE = "data/portfolio.json"
-    
-    # ティッカー
-    TICKER = "NKD=F"       # CME日経225先物
+    TICKER = "NKD=F"
+
 
 # ============================================================
 # ユーティリティ
 # ============================================================
-def tick_round(price):
+def tick_round(price: float) -> int:
     """5円刻みに丸める"""
     return int(round(price / Config.TICK) * Config.TICK)
 
-def calc_slope(closes):
+
+def calc_slope(closes: pd.Series) -> float:
     """終値配列の回帰傾き"""
     n = len(closes)
     if n < 2:
-        return 0
+        return 0.0
     x = np.arange(n)
-    y = closes.values if hasattr(closes, 'values') else closes
-    return np.polyfit(x, y, 1)[0]
+    y = closes.values
+    return float(np.polyfit(x, y, 1)[0])
 
-def send_line(message):
+
+def send_line(message: str):
     """LINE Notify送信"""
     token = os.environ.get("LINE_NOTIFY_TOKEN")
     if not token:
@@ -76,6 +99,7 @@ def send_line(message):
     except Exception as e:
         print(f"⚠️ LINE送信失敗: {e}")
 
+
 # ============================================================
 # データ取得
 # ============================================================
@@ -86,7 +110,7 @@ class MarketData:
         try:
             ticker = yf.Ticker(Config.TICKER)
             
-            # 日足 (ATR計算用)
+            # 日足 (セッションOHLC用)
             daily = ticker.history(period="1mo")
             
             # 15分足 (モメンタム計算用)
@@ -101,194 +125,199 @@ class MarketData:
             print(f"❌ データ取得失敗: {e}")
             return None
 
-# ============================================================
-# ポートフォリオ管理
-# ============================================================
-class Portfolio:
-    def __init__(self):
-        self.data = self._load()
-    
-    def _load(self):
-        """JSONからロード"""
-        path = Path(Config.DATA_FILE)
-        if path.exists():
-            with open(path, 'r') as f:
-                return json.load(f)
-        return {
-            'capital': Config.CAPITAL,
-            'position': None,
-            'trades': [],
-            'predictions': []
-        }
-    
-    def save(self):
-        """JSONに保存"""
-        path = Path(Config.DATA_FILE)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w') as f:
-            json.dump(self.data, f, indent=2, default=str)
-    
-    def has_position(self):
-        return self.data.get('position') is not None
-    
-    def open_position(self, action, entry, stop, target):
-        """ポジション開始"""
-        self.data['position'] = {
-            'action': action,
-            'entry': entry,
-            'stop': stop,
-            'target': target,
-            'opened_at': datetime.now(Config.JST).isoformat()
-        }
-        self.save()
-    
-    def close_position(self, exit_price, reason):
-        """ポジション決済"""
-        pos = self.data['position']
-        if not pos:
-            return None
-        
-        entry = pos['entry']
-        action = pos['action']
-        
-        if action == 'BUY':
-            diff = exit_price - entry
-        else:
-            diff = entry - exit_price
-        
-        pnl = diff * Config.MULTIPLIER * Config.LOTS - Config.COMMISSION
-        
-        trade = {
-            'action': action,
-            'entry': entry,
-            'exit': exit_price,
-            'pnl': pnl,
-            'reason': reason,
-            'closed_at': datetime.now(Config.JST).isoformat()
-        }
-        
-        self.data['trades'].append(trade)
-        self.data['capital'] += pnl
-        self.data['position'] = None
-        self.save()
-        
-        return trade
-    
-    def log_prediction(self, session, action, entry, stop, target):
-        """予測ログ"""
-        self.data['predictions'].append({
-            'date': datetime.now(Config.JST).strftime('%Y-%m-%d'),
-            'session': session,
-            'action': action,
-            'entry': entry,
-            'stop': stop,
-            'target': target
-        })
-        self.save()
 
 # ============================================================
-# Raptorシグナル
+# Raptorロジック
 # ============================================================
 class RaptorEngine:
-    def __init__(self, market_data):
-        self.data = market_data
+    """Raptor225の判定ロジック (内部プロンプト完全準拠)"""
     
-    def get_signal(self, session):
+    def __init__(self, market_data: dict):
+        self.daily = market_data.get('daily')
+        self.intraday = market_data.get('intraday')
+        self.current_price = market_data.get('current_price')
+    
+    def get_prev_session_ohlc(self, session: str) -> dict:
         """
-        セッションに応じたシグナルを生成
+        直前セッションのOHLC取得
+        - DAY: 前日のNIGHT (最後から2番目の日足を使用)
+        - NIGHT: 同日のDAY (最後の日足を使用)
+        """
+        if self.daily is None or len(self.daily) < 2:
+            return None
+        
+        # 簡易的に日足で代用
+        if session == 'DAY':
+            prev = self.daily.iloc[-2]  # 前日
+        else:
+            prev = self.daily.iloc[-1]  # 当日
+        
+        return {
+            'open': prev['Open'],
+            'high': prev['High'],
+            'low': prev['Low'],
+            'close': prev['Close'],
+            'range': prev['High'] - prev['Low']
+        }
+    
+    def get_avg_range(self, n: int = 10) -> float:
+        """直近nセッションの平均レンジ"""
+        if self.daily is None or len(self.daily) < n:
+            return 500  # デフォルト
+        
+        ranges = self.daily['High'].iloc[-n:] - self.daily['Low'].iloc[-n:]
+        return ranges.mean()
+    
+    def calc_score_b(self, prev_ohlc: dict) -> int:
+        """
+        B: 直前セッションの実体方向
+        - 陽線: +1
+        - 陰線: -1
+        - 同値: 0
+        """
+        if prev_ohlc['close'] > prev_ohlc['open']:
+            return 1
+        elif prev_ohlc['close'] < prev_ohlc['open']:
+            return -1
+        return 0
+    
+    def calc_score_c(self) -> int:
+        """
+        C: 直近15M 32本の回帰傾き
+        - 正: +1
+        - 負: -1
+        - 微小: 0
+        """
+        if self.intraday is None or len(self.intraday) < Config.N_MOMENTUM:
+            return 0
+        
+        closes = self.intraday['Close'].iloc[-Config.N_MOMENTUM:]
+        slope = calc_slope(closes)
+        
+        # 微小判定
+        if abs(slope) < Config.SLOPE_THRESHOLD:
+            return 0
+        
+        return 1 if slope > 0 else -1
+    
+    def apply_overheat_d(self, score_b: int, prev_range: float, avg_range: float) -> int:
+        """
+        D: 過熱判定
+        直前セッションレンジ >= 平均レンジ × r倍 なら B → 0 へ弱める
+        """
+        if avg_range <= 0:
+            return score_b
+        
+        is_overheat = prev_range >= avg_range * Config.R_OVERHEAT
+        
+        if is_overheat:
+            # Bを0に寄せる (1→0, -1→0, 0→0)
+            return 0
+        
+        return score_b
+    
+    def check_risk_gate(self, entry_price: float, prev_close: float) -> tuple:
+        """
+        RiskGate: ギャップが大きすぎる場合は NO-TRADE
+        Returns: (pass: bool, gap_rate: float)
+        """
+        if prev_close <= 0:
+            return False, 0
+        
+        gap_rate = abs(entry_price - prev_close) / prev_close
+        return gap_rate < Config.G_CUT, gap_rate
+    
+    def get_signal(self, session: str, entry_price: float) -> dict:
+        """
+        Raptorシグナル判定
         
         Args:
             session: 'DAY' or 'NIGHT'
+            entry_price: 寄付き予想価格
         
         Returns:
-            dict: {action, entry, stop, target} or None
+            dict with signal details
         """
-        daily = self.data.get('daily')
-        intraday = self.data.get('intraday')
-        current = self.data.get('current_price')
-        
-        if daily is None or intraday is None or current is None:
-            return None
-        
-        if len(daily) < 2 or len(intraday) < 10:
-            return None
-        
-        # 直前セッションのトレンド (日足の最後のバーで代用)
-        prev_open = daily.iloc[-2]['Open']
-        prev_close = daily.iloc[-2]['Close']
-        
-        # B判定
-        if prev_close > prev_open:
-            score_b = 1
-        elif prev_close < prev_open:
-            score_b = -1
-        else:
-            score_b = 0
-        
-        # C判定 (15分足の傾き)
-        slope = calc_slope(intraday['Close'].iloc[-48:])
-        score_c = 1 if slope > 0 else -1
-        
-        # 合計スコア
-        total = score_b + score_c
-        
-        if total >= 2:
-            action = 'BUY'
-        elif total <= -2:
-            action = 'SELL'
-        else:
-            return None
-        
-        # ギャップチェック
-        gap = abs(current - prev_close) / prev_close
-        if gap >= Config.GAP_CUT:
-            print(f"⚠️ ギャップ {gap*100:.2f}% >= {Config.GAP_CUT*100}% → 見送り")
-            return None
-        
-        # ATR計算
-        daily['Range'] = daily['High'] - daily['Low']
-        atr = daily['Range'].rolling(14).mean().iloc[-1]
-        if pd.isna(atr) or atr <= 0:
-            atr = 400
-        
-        entry = tick_round(current)
-        s_dist = tick_round(atr * Config.STOP_MULT)
-        t_dist = tick_round(atr * Config.TARGET_MULT)
-        
-        if action == 'BUY':
-            stop = entry - s_dist
-            target = entry + t_dist
-        else:
-            stop = entry + s_dist
-            target = entry - t_dist
-        
-        return {
-            'action': action,
-            'entry': entry,
-            'stop': stop,
-            'target': target,
-            'score_b': score_b,
-            'score_c': score_c,
-            'atr': atr
+        result = {
+            'session': session,
+            'entry_price': entry_price,
+            'verdict': 'NO-TRADE',
+            'reason': '',
+            'score_b': 0,
+            'score_c': 0,
+            'score_b_adj': 0,  # 過熱調整後
+            'total_score': 0,
+            'gap_rate': 0,
+            'is_overheat': False
         }
+        
+        # 1. 直前セッションOHLC取得
+        prev_ohlc = self.get_prev_session_ohlc(session)
+        if prev_ohlc is None:
+            result['reason'] = 'INSUFFICIENT-DATA: 直前セッションデータなし'
+            return result
+        
+        prev_close = prev_ohlc['close']
+        prev_range = prev_ohlc['range']
+        
+        # 2. RiskGate (ギャップチェック)
+        risk_pass, gap_rate = self.check_risk_gate(entry_price, prev_close)
+        result['gap_rate'] = gap_rate
+        
+        if not risk_pass:
+            result['reason'] = f'RiskGate FAIL: gap={gap_rate*100:.3f}% >= {Config.G_CUT*100}%'
+            return result
+        
+        # 3. B: 直前セッション方向
+        score_b = self.calc_score_b(prev_ohlc)
+        result['score_b'] = score_b
+        
+        # 4. C: モメンタム
+        score_c = self.calc_score_c()
+        result['score_c'] = score_c
+        
+        # 5. D: 過熱判定
+        avg_range = self.get_avg_range(10)
+        score_b_adj = self.apply_overheat_d(score_b, prev_range, avg_range)
+        result['score_b_adj'] = score_b_adj
+        result['is_overheat'] = (score_b != score_b_adj)
+        
+        # 6. TotalScore
+        total_score = score_b_adj + score_c
+        result['total_score'] = total_score
+        
+        # 7. 判定
+        if total_score >= 2:
+            result['verdict'] = 'BUY'
+            result['reason'] = f'B={score_b_adj:+d} C={score_c:+d} Total={total_score:+d}'
+        elif total_score <= -2:
+            result['verdict'] = 'SELL'
+            result['reason'] = f'B={score_b_adj:+d} C={score_c:+d} Total={total_score:+d}'
+        else:
+            result['verdict'] = 'NO-TRADE'
+            result['reason'] = f'B={score_b_adj:+d} C={score_c:+d} Total={total_score:+d} (条件未達)'
+        
+        return result
+
 
 # ============================================================
 # メインBot
 # ============================================================
 class NikkeiBot:
     def __init__(self):
-        self.portfolio = Portfolio()
+        pass
     
-    def determine_session(self):
+    def determine_session(self) -> str:
         """現在時刻からセッションを判定"""
         now = datetime.now(Config.JST)
         hour = now.hour
+        minute = now.minute
         
         # 08:00〜09:00 → DAY判定
-        if 8 <= hour < 9:
+        if hour == 8 or (hour == 9 and minute == 0):
             return 'DAY'
         # 16:00〜17:30 → NIGHT判定
-        elif 16 <= hour < 18:
+        elif (hour == 16) or (hour == 17 and minute <= 30):
             return 'NIGHT'
         else:
             return None
@@ -296,7 +325,7 @@ class NikkeiBot:
     def run(self):
         """メイン実行"""
         print("=" * 60)
-        print("🦖 Raptor225 Bot v1.0")
+        print("🦖 Raptor225 Bot v2.0 (内部プロンプト準拠)")
         now = datetime.now(Config.JST)
         print(f"📅 {now.strftime('%Y-%m-%d %H:%M JST')}")
         print("=" * 60)
@@ -304,7 +333,7 @@ class NikkeiBot:
         # セッション判定
         session = self.determine_session()
         if not session:
-            print(f"⏰ 現在時刻 {now.hour}:{now.minute:02d} は判定時間外です")
+            print(f"⏰ 現在時刻 {now.hour}:{now.minute:02d} は対応時間外です")
             print("   DAY判定: 08:00〜09:00")
             print("   NIGHT判定: 16:00〜17:30")
             return
@@ -319,44 +348,46 @@ class NikkeiBot:
             return
         
         current = market.get('current_price')
-        print(f"   現在価格: ¥{current:,.0f}")
-        
-        # シグナル生成
-        print("\n🔎 シグナル判定...")
-        engine = RaptorEngine(market)
-        signal = engine.get_signal(session)
-        
-        if not signal:
-            print("   → NO-TRADE (シグナル条件未達)")
-            send_line(f"🦖 {session}セッション\n→ NO-TRADE")
+        if current is None:
+            send_line("❌ 現在価格取得失敗")
             return
         
-        action = signal['action']
-        entry = signal['entry']
-        stop = signal['stop']
-        target = signal['target']
+        entry_price = tick_round(current)
+        print(f"   寄付き予想価格: ¥{entry_price:,}")
         
-        print(f"   B={signal['score_b']:+d} C={signal['score_c']:+d}")
-        print(f"   → {action}")
-        print(f"   Entry: ¥{entry:,}")
-        print(f"   Stop:  ¥{stop:,}")
-        print(f"   Target:¥{target:,}")
+        # Raptor判定
+        print("\n🔎 Raptor判定...")
+        engine = RaptorEngine(market)
+        signal = engine.get_signal(session, entry_price)
         
-        # ログ保存
-        self.portfolio.log_prediction(session, action, entry, stop, target)
+        # 結果出力
+        print(f"\n【判定結果】")
+        print(f"   Session:     {signal['session']}")
+        print(f"   Entry:       ¥{signal['entry_price']:,}")
+        print(f"   Gap Rate:    {signal['gap_rate']*100:.3f}%")
+        print(f"   B (調整前):  {signal['score_b']:+d}")
+        print(f"   B (調整後):  {signal['score_b_adj']:+d} {'(過熱抑制)' if signal['is_overheat'] else ''}")
+        print(f"   C:           {signal['score_c']:+d}")
+        print(f"   TotalScore:  {signal['total_score']:+d}")
+        print(f"   Verdict:     {signal['verdict']}")
+        print(f"   Reason:      {signal['reason']}")
         
         # LINE通知
-        msg = f"""🦖 {session}セッション
-📈 {action}
+        if signal['verdict'] in ['BUY', 'SELL']:
+            msg = f"""🦖 Raptor225 {session}
+📈 {signal['verdict']}
 ---
-Entry: ¥{entry:,}
-Stop:  ¥{stop:,} (損切り)
-Target:¥{target:,} (利確)
+Entry: ¥{entry_price:,}
+B={signal['score_b_adj']:+d} C={signal['score_c']:+d}
+Gap: {signal['gap_rate']*100:.2f}%
 ---
-ATR: {signal['atr']:.0f}"""
-        send_line(msg)
+Exit: {'15:45' if session == 'DAY' else '06:00'}"""
+            send_line(msg)
+        else:
+            send_line(f"🦖 {session}セッション\n→ {signal['verdict']}\n{signal['reason']}")
         
         print("\n✅ 完了")
+
 
 # ============================================================
 # エントリーポイント
