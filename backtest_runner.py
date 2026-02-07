@@ -1,8 +1,12 @@
+#!/usr/bin/env python3
 """
-Raptor225 Backtest Runner (Clean Rewrite v2)
-=============================================
-運用環境: 楽天証券 / 資金10万円 / 日経225マイクロ 1枚 固定
-対象: DAYセッション + NIGHTセッション (両方エントリー)
+Raptor225 バックテスト
+======================
+楽天証券 / 資金10万円 / 日経225マイクロ1枚 / デイトレード
+
+セッション:
+  - DAY:   08:45〜15:15 (判定08:00、直前=前日NIGHT)
+  - NIGHT: 16:30〜翌06:00 (判定16:00、直前=同日DAY)
 """
 
 import pandas as pd
@@ -16,344 +20,340 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================
-# 設定
+# 運用設定
 # ============================================================
-INITIAL_CAPITAL = 100_000   # 資金10万円
-LOTS = 1                    # マイクロ 1枚
-MULTIPLIER = 10             # マイクロ = 1ポイント10円
-COST_PER_TRADE = 22         # 楽天マイクロ往復手数料 (11円 x 2)
-TICK_SIZE = 5               # 呼値
+CAPITAL = 100_000      # 資金10万円
+LOTS = 1               # マイクロ1枚
+MULTIPLIER = 10        # 1ポイント = 10円
+COMMISSION = 22        # 往復手数料 (11円×2)
+TICK = 5               # 呼値
 
+# ============================================================
 # Raptorロジック設定
-GAP_THRESHOLD = 0.0025      # 0.25%
-MOMENTUM_PERIOD = 48        # 12時間分 (15分足48本)
-STOP_ATR_MULT = 1.0         # ストップ = 1.0 ATR
-TARGET_ATR_MULT = 2.0       # ターゲット = 2.0 ATR
+# ============================================================
+GAP_CUT = 0.0025       # ギャップ閾値 0.25%
+STOP_MULT = 1.0        # ストップ = 1.0 ATR
+TARGET_MULT = 2.0      # ターゲット = 2.0 ATR
 
 # ============================================================
 # ユーティリティ
 # ============================================================
-def round_to_tick(price):
-    """価格を呼値(5円刻み)に丸める"""
-    return int(round(price / TICK_SIZE) * TICK_SIZE)
+def tick_round(price):
+    """5円刻みに丸める"""
+    return int(round(price / TICK) * TICK)
 
-def calculate_slope(series):
-    """終値系列の回帰直線の傾きを計算"""
-    y = series.values
-    x = np.arange(len(y))
-    if len(x) < 2:
+def calc_slope(closes):
+    """終値配列の回帰傾き"""
+    n = len(closes)
+    if n < 2:
         return 0
-    A = np.vstack([x, np.ones(len(x))]).T
-    slope, _ = np.linalg.lstsq(A, y, rcond=None)[0]
+    x = np.arange(n)
+    y = closes.values if hasattr(closes, 'values') else closes
+    slope = np.polyfit(x, y, 1)[0]
     return slope
 
 # ============================================================
 # データ読み込み
 # ============================================================
 def load_data():
-    """N225minif_*.xlsx を全て読み込み、1分足DataFrameを返す"""
-    data_dir = os.path.dirname(os.path.abspath(__file__))
-    pattern = os.path.join(data_dir, "N225minif_*.xlsx")
-    files = sorted(glob.glob(pattern))
+    """N225minif_*.xlsx を読み込み"""
+    base = os.path.dirname(os.path.abspath(__file__))
+    files = sorted(glob.glob(os.path.join(base, "N225minif_*.xlsx")))
     
     if not files:
-        print("❌ エラー: N225minif_*.xlsx ファイルが見つかりません")
+        print("❌ N225minif_*.xlsx が見つかりません")
         sys.exit(1)
     
-    print(f"📥 {len(files)}個のExcelファイルを読み込み中...")
+    print(f"📥 {len(files)}ファイル読み込み中...")
     
     dfs = []
     for f in files:
         print(f"   {os.path.basename(f)}")
-        try:
-            df = pd.read_excel(f)
-            dfs.append(df)
-        except Exception as e:
-            print(f"   ⚠️ 読み込み失敗: {e}")
+        dfs.append(pd.read_excel(f))
     
-    full_df = pd.concat(dfs, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
     
-    # カラム名を統一
-    rename_map = {
+    # カラム名統一
+    df.rename(columns={
         '日付': 'Date', '時間': 'Time', '時刻': 'Time',
         '始値': 'Open', '高値': 'High', '安値': 'Low', '終値': 'Close'
-    }
-    full_df.rename(columns=rename_map, inplace=True)
+    }, inplace=True)
     
-    # Datetime インデックス作成
-    full_df['Datetime'] = pd.to_datetime(
-        full_df['Date'].astype(str) + ' ' + full_df['Time'].astype(str)
-    )
-    full_df.set_index('Datetime', inplace=True)
-    full_df.sort_index(inplace=True)
-    full_df = full_df[~full_df.index.duplicated(keep='first')]
+    # Datetime化
+    df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
+    df = df.set_index('Datetime').sort_index()
+    df = df[~df.index.duplicated(keep='first')]
+    df = df[['Open', 'High', 'Low', 'Close']].astype(float)
     
-    df = full_df[['Open', 'High', 'Low', 'Close']].astype(float)
-    print(f"✅ {len(df):,}本の1分足を読み込み完了 ({df.index[0]} 〜 {df.index[-1]})")
-    
+    print(f"✅ {len(df):,}本 ({df.index[0]} 〜 {df.index[-1]})")
     return df
 
 # ============================================================
-# セッション単位のトレード実行
+# セッションデータ抽出
 # ============================================================
-def execute_session_trade(df_1m, df_15m, df_daily, session_type, 
-                          session_open_time, session_close_time,
-                          prev_session_close_time):
+def get_session(df_1m, start_dt, end_dt):
+    """指定時間範囲の1分足を取得"""
+    return df_1m.loc[start_dt:end_dt]
+
+def get_session_ohlc(df_1m, start_dt, end_dt):
+    """セッションのOHLC (始値, 高値, 安値, 終値)"""
+    s = get_session(df_1m, start_dt, end_dt)
+    if s.empty:
+        return None
+    return {
+        'open': s.iloc[0]['Open'],
+        'high': s['High'].max(),
+        'low': s['Low'].min(),
+        'close': s.iloc[-1]['Close']
+    }
+
+# ============================================================
+# Raptorシグナル判定
+# ============================================================
+def raptor_signal(prev_ohlc, slope):
     """
-    1セッション分のトレードをシミュレート
-    
-    Returns:
-        dict: トレード結果 (None if no trade)
+    B: 直前セッションの方向 (陽線+1, 陰線-1)
+    C: モメンタム傾き (正+1, 負-1)
+    合計 >= +2: BUY, <= -2: SELL, それ以外: NO-TRADE
     """
-    
-    # セッションデータ取得
-    session_data = df_1m.loc[session_open_time:session_close_time]
-    if session_data.empty:
-        return None
-    
-    entry_price = round_to_tick(session_data.iloc[0]['Open'])
-    
-    # 直前セッションの終値を取得
-    # prev_session_close_time より前のデータで最後の終値
-    prev_data = df_1m.loc[:prev_session_close_time]
-    if prev_data.empty:
-        return None
-    
-    prev_close = prev_data.iloc[-1]['Close']
-    
-    # 直前セッションの始値を取得 (陽線/陰線判定用)
-    # DAYの場合: 直前はNIGHT (前日16:30〜当日06:00)
-    # NIGHTの場合: 直前はDAY (当日08:45〜15:15)
-    
-    if session_type == "DAY":
-        # 直前NIGHT: 前日16:30開始
-        prev_open_time = prev_session_close_time - timedelta(hours=13, minutes=30)
-    else:  # NIGHT
-        # 直前DAY: 同日08:45開始
-        prev_open_time = prev_session_close_time - timedelta(hours=6, minutes=30)
-    
-    prev_session_data = df_1m.loc[prev_open_time:prev_session_close_time]
-    if prev_session_data.empty:
-        return None
-    
-    prev_open = prev_session_data.iloc[0]['Open']
-    
-    # ===== Raptorロジック =====
-    
-    # 1. ギャップチェック (RiskGate)
-    gap_rate = abs(entry_price - prev_close) / prev_close
-    if gap_rate >= GAP_THRESHOLD:
-        return None  # ギャップが大きすぎる → 見送り
-    
-    # 2. B判定: 直前セッションのトレンド (陽線/陰線)
-    if prev_close > prev_open:
-        score_b = 1   # 陽線
-    elif prev_close < prev_open:
-        score_b = -1  # 陰線
+    # B判定
+    if prev_ohlc['close'] > prev_ohlc['open']:
+        score_b = 1
+    elif prev_ohlc['close'] < prev_ohlc['open']:
+        score_b = -1
     else:
-        score_b = 0   # 同値
+        score_b = 0
     
-    # 3. C判定: モメンタム (15分足の傾き)
-    # 直前セッションの15分足のみを使う（セッション混合を防止）
-    recent_15m = df_15m.loc[prev_open_time:prev_session_close_time]
-    if len(recent_15m) < 10:  # 最低10本（2.5時間分）あればOK
-        return None  # データ不足
-    
-    slope = calculate_slope(recent_15m['Close'])
+    # C判定
     score_c = 1 if slope > 0 else -1
     
-    # 4. 合計スコア → シグナル決定
-    total_score = score_b + score_c
+    total = score_b + score_c
     
-    if total_score >= 2:
-        action = "BUY"
-    elif total_score <= -2:
-        action = "SELL"
+    if total >= 2:
+        return 'BUY'
+    elif total <= -2:
+        return 'SELL'
     else:
-        return None  # NO-TRADE
+        return None
+
+# ============================================================
+# トレード実行
+# ============================================================
+def execute_trade(df_1m, action, entry_price, stop, target, session_end):
+    """
+    分足をループしてStop/Target判定、ヒットしなければセッション終了時決済
+    """
+    session_data = df_1m.loc[:session_end]
     
-    # ===== リスク管理 =====
-    
-    # ATR取得 (直前日ベース)
-    prev_date = prev_session_close_time.date()
-    try:
-        ts = pd.Timestamp(prev_date)
-        if not isinstance(df_daily.index, pd.DatetimeIndex):
-            df_daily.index = pd.to_datetime(df_daily.index)
-        idx = df_daily.index.get_indexer([ts], method='pad')[0]
-        atr = df_daily.iloc[idx]['ATR'] if idx != -1 else 500
-        if pd.isna(atr) or atr <= 0:
-            atr = 500
-    except:
-        atr = 500
-    
-    # ストップ・ターゲット計算
-    stop_dist = round_to_tick(atr * STOP_ATR_MULT)
-    target_dist = round_to_tick(atr * TARGET_ATR_MULT)
-    
-    if action == "BUY":
-        stop = entry_price - stop_dist
-        target = entry_price + target_dist
-    else:
-        stop = entry_price + stop_dist
-        target = entry_price - target_dist
-    
-    # ===== トレード実行 (分足シミュレーション) =====
-    exit_price = None
-    
-    for _, row in session_data.iterrows():
-        if action == "BUY":
-            if row['Low'] <= stop:
-                exit_price = stop
-                break
-            if row['High'] >= target:
-                exit_price = target
-                break
+    for _, bar in session_data.iterrows():
+        if action == 'BUY':
+            if bar['Low'] <= stop:
+                return stop, 'STOP'
+            if bar['High'] >= target:
+                return target, 'TARGET'
         else:  # SELL
-            if row['High'] >= stop:
-                exit_price = stop
-                break
-            if row['Low'] <= target:
-                exit_price = target
-                break
+            if bar['High'] >= stop:
+                return stop, 'STOP'
+            if bar['Low'] <= target:
+                return target, 'TARGET'
     
-    # ヒットしなければ引けで決済
-    if exit_price is None:
-        exit_price = round_to_tick(session_data.iloc[-1]['Close'])
-    
-    # ===== 損益計算 =====
-    if action == "BUY":
-        diff = exit_price - entry_price
-    else:
-        diff = entry_price - exit_price
-    
-    # 損益 = 値幅 × 倍率 × 枚数 - 手数料
-    pnl = (diff * MULTIPLIER * LOTS) - COST_PER_TRADE
-    
-    return {
-        'date': session_open_time.date(),
-        'session': session_type,
-        'action': action,
-        'entry': entry_price,
-        'exit': exit_price,
-        'diff': diff,
-        'pnl': pnl
-    }
+    # セッション終了時決済
+    if not session_data.empty:
+        return tick_round(session_data.iloc[-1]['Close']), 'CLOSE'
+    return entry_price, 'NO_DATA'
 
 # ============================================================
 # バックテスト本体
 # ============================================================
-def run_backtest(df_1m):
-    """Raptorロジックでバックテストを実行 (DAY + NIGHT)"""
-    
-    # 15分足を作成
+def backtest(df_1m):
+    # 15分足作成
     df_15m = df_1m.resample('15min').agg({
         'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
     }).dropna()
     
-    # 日次ATRを作成 (14日移動平均)
+    # 日次ATR (14日平均レンジ)
     df_daily = df_1m.resample('D').agg({
-        'High': 'max', 'Low': 'min', 'Close': 'last'
+        'High': 'max', 'Low': 'min'
     }).dropna()
     df_daily['ATR'] = (df_daily['High'] - df_daily['Low']).rolling(14).mean()
     
     # 取引日リスト
-    unique_dates = sorted(set(df_1m.index.date))
+    dates = sorted(set(df_1m.index.date))
     
-    # 結果格納
-    capital = INITIAL_CAPITAL
+    capital = CAPITAL
     trades = []
     
-    print(f"\n🚀 バックテスト開始 (対象: {len(unique_dates)}日 × DAY/NIGHT)")
-    print(f"   設定: マイクロ{LOTS}枚, Stop {STOP_ATR_MULT} ATR, Target {TARGET_ATR_MULT} ATR")
+    print(f"\n🚀 バックテスト開始 ({len(dates)}日)")
+    print(f"   マイクロ{LOTS}枚, Stop {STOP_MULT} ATR, Target {TARGET_MULT} ATR")
     print("-" * 60)
     
-    for i in range(1, len(unique_dates)):
-        curr_date = unique_dates[i]
-        prev_date = unique_dates[i - 1]
+    for i in range(1, len(dates)):
+        today = dates[i]
+        yesterday = dates[i - 1]
         
-        # ===== DAYセッション =====
-        # エントリー: 08:45, 決済: 15:15
-        # 直前セッション: 前日NIGHT (06:00終了)
-        day_open = datetime.combine(curr_date, time(8, 45))
-        day_close = datetime.combine(curr_date, time(15, 15))
-        prev_night_close = datetime.combine(curr_date, time(6, 0))
+        # ========== DAYセッション ==========
+        # 直前 = 前日NIGHT (昨日16:30〜今日06:00)
+        night_start = datetime.combine(yesterday, time(16, 30))
+        night_end = datetime.combine(today, time(6, 0))
+        prev_night = get_session_ohlc(df_1m, night_start, night_end)
         
-        result = execute_session_trade(
-            df_1m, df_15m, df_daily, 
-            "DAY", day_open, day_close, prev_night_close
-        )
-        if result:
-            capital += result['pnl']
-            trades.append(result)
-            if len(trades) <= 5:
-                print(f"  #{len(trades)} {result['date']} {result['session']} {result['action']} Entry={result['entry']} Exit={result['exit']} PnL={result['pnl']:+,.0f}円")
+        if prev_night:
+            # DAYセッション時間
+            day_start = datetime.combine(today, time(8, 45))
+            day_end = datetime.combine(today, time(15, 15))
+            day_data = get_session(df_1m, day_start, day_end)
+            
+            if not day_data.empty:
+                entry = tick_round(day_data.iloc[0]['Open'])
+                
+                # ギャップチェック
+                gap = abs(entry - prev_night['close']) / prev_night['close']
+                
+                if gap < GAP_CUT:
+                    # モメンタム (直前NIGHTの15分足)
+                    night_15m = df_15m.loc[night_start:night_end]
+                    if len(night_15m) >= 10:
+                        slope = calc_slope(night_15m['Close'])
+                        action = raptor_signal(prev_night, slope)
+                        
+                        if action:
+                            # ATR取得
+                            try:
+                                atr = df_daily.loc[:str(yesterday)]['ATR'].iloc[-1]
+                                if pd.isna(atr) or atr <= 0:
+                                    atr = 400
+                            except:
+                                atr = 400
+                            
+                            s_dist = tick_round(atr * STOP_MULT)
+                            t_dist = tick_round(atr * TARGET_MULT)
+                            
+                            if action == 'BUY':
+                                stop = entry - s_dist
+                                target = entry + t_dist
+                            else:
+                                stop = entry + s_dist
+                                target = entry - t_dist
+                            
+                            # トレード実行
+                            exit_price, reason = execute_trade(
+                                day_data, action, entry, stop, target, day_end
+                            )
+                            
+                            diff = (exit_price - entry) if action == 'BUY' else (entry - exit_price)
+                            pnl = diff * MULTIPLIER * LOTS - COMMISSION
+                            capital += pnl
+                            
+                            trades.append({
+                                'date': today, 'session': 'DAY', 'action': action,
+                                'entry': entry, 'exit': exit_price, 'pnl': pnl
+                            })
+                            
+                            if len(trades) <= 5:
+                                print(f"  #{len(trades)} {today} DAY {action} {entry}→{exit_price} PnL={pnl:+,.0f}")
         
-        # ===== NIGHTセッション =====
-        # エントリー: 16:30, 決済: 翌日06:00
-        # 直前セッション: 同日DAY (15:15終了)
-        night_open = datetime.combine(curr_date, time(16, 30))
-        night_close = datetime.combine(curr_date + timedelta(days=1), time(6, 0))
-        prev_day_close = datetime.combine(curr_date, time(15, 15))
+        # ========== NIGHTセッション ==========
+        # 直前 = 同日DAY (今日08:45〜15:15)
+        day_start = datetime.combine(today, time(8, 45))
+        day_end = datetime.combine(today, time(15, 15))
+        prev_day = get_session_ohlc(df_1m, day_start, day_end)
         
-        result = execute_session_trade(
-            df_1m, df_15m, df_daily,
-            "NIGHT", night_open, night_close, prev_day_close
-        )
-        if result:
-            capital += result['pnl']
-            trades.append(result)
-            if len(trades) <= 5:
-                print(f"  #{len(trades)} {result['date']} {result['session']} {result['action']} Entry={result['entry']} Exit={result['exit']} PnL={result['pnl']:+,.0f}円")
+        if prev_day:
+            # NIGHTセッション時間
+            night_start = datetime.combine(today, time(16, 30))
+            night_end = datetime.combine(today + timedelta(days=1), time(6, 0))
+            night_data = get_session(df_1m, night_start, night_end)
+            
+            if not night_data.empty:
+                entry = tick_round(night_data.iloc[0]['Open'])
+                
+                # ギャップチェック
+                gap = abs(entry - prev_day['close']) / prev_day['close']
+                
+                if gap < GAP_CUT:
+                    # モメンタム (直前DAYの15分足)
+                    day_15m = df_15m.loc[day_start:day_end]
+                    if len(day_15m) >= 10:
+                        slope = calc_slope(day_15m['Close'])
+                        action = raptor_signal(prev_day, slope)
+                        
+                        if action:
+                            # ATR取得
+                            try:
+                                atr = df_daily.loc[:str(today)]['ATR'].iloc[-1]
+                                if pd.isna(atr) or atr <= 0:
+                                    atr = 400
+                            except:
+                                atr = 400
+                            
+                            s_dist = tick_round(atr * STOP_MULT)
+                            t_dist = tick_round(atr * TARGET_MULT)
+                            
+                            if action == 'BUY':
+                                stop = entry - s_dist
+                                target = entry + t_dist
+                            else:
+                                stop = entry + s_dist
+                                target = entry - t_dist
+                            
+                            # トレード実行
+                            exit_price, reason = execute_trade(
+                                night_data, action, entry, stop, target, night_end
+                            )
+                            
+                            diff = (exit_price - entry) if action == 'BUY' else (entry - exit_price)
+                            pnl = diff * MULTIPLIER * LOTS - COMMISSION
+                            capital += pnl
+                            
+                            trades.append({
+                                'date': today, 'session': 'NIGHT', 'action': action,
+                                'entry': entry, 'exit': exit_price, 'pnl': pnl
+                            })
+                            
+                            if len(trades) <= 5:
+                                print(f"  #{len(trades)} {today} NIGHT {action} {entry}→{exit_price} PnL={pnl:+,.0f}")
     
-    # ===== 結果集計 =====
+    # ========== 結果集計 ==========
     print("-" * 60)
     
     if not trades:
-        print("⚠️ トレードが発生しませんでした")
+        print("⚠️ トレードなし")
         return
     
-    df_trades = pd.DataFrame(trades)
+    df_t = pd.DataFrame(trades)
     
-    total_pnl = df_trades['pnl'].sum()
-    win_trades = df_trades[df_trades['pnl'] > 0]
-    lose_trades = df_trades[df_trades['pnl'] <= 0]
+    wins = df_t[df_t['pnl'] > 0]
+    losses = df_t[df_t['pnl'] <= 0]
     
-    win_count = len(win_trades)
-    lose_count = len(lose_trades)
-    total_count = len(df_trades)
-    win_rate = win_count / total_count * 100
+    total_pnl = df_t['pnl'].sum()
+    win_rate = len(wins) / len(df_t) * 100
     
-    gross_profit = win_trades['pnl'].sum() if len(win_trades) > 0 else 0
-    gross_loss = abs(lose_trades['pnl'].sum()) if len(lose_trades) > 0 else 0
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+    gross_win = wins['pnl'].sum() if len(wins) > 0 else 0
+    gross_loss = abs(losses['pnl'].sum()) if len(losses) > 0 else 0
+    pf = gross_win / gross_loss if gross_loss > 0 else float('inf')
     
-    # 月数計算
     months = len(set([t['date'].strftime('%Y-%m') for t in trades]))
-    avg_monthly_pnl = total_pnl / months if months > 0 else 0
+    monthly = total_pnl / months if months > 0 else 0
     
-    return_pct = (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
+    day_t = df_t[df_t['session'] == 'DAY']
+    night_t = df_t[df_t['session'] == 'NIGHT']
     
-    # セッション別集計
-    day_trades = df_trades[df_trades['session'] == 'DAY']
-    night_trades = df_trades[df_trades['session'] == 'NIGHT']
-    
-    print(f"\n📊 バックテスト結果")
-    print(f"{'='*60}")
-    print(f"  期間          : {df_trades['date'].min()} 〜 {df_trades['date'].max()}")
-    print(f"  トレード数    : {total_count}回 (DAY:{len(day_trades)} NIGHT:{len(night_trades)})")
-    print(f"  勝率          : {win_rate:.1f}% ({win_count}勝 {lose_count}敗)")
-    print(f"  プロフィット  : {profit_factor:.2f}")
-    print(f"{'='*60}")
-    print(f"  最終資金      : ¥{capital:,.0f}")
-    print(f"  純損益        : ¥{total_pnl:+,.0f}")
-    print(f"  リターン      : {return_pct:+.1f}%")
-    print(f"  月平均損益    : ¥{avg_monthly_pnl:+,.0f}")
-    print(f"{'='*60}")
+    print(f"\n📊 結果")
+    print("=" * 60)
+    print(f"  期間      : {df_t['date'].min()} 〜 {df_t['date'].max()}")
+    print(f"  トレード  : {len(df_t)}回 (DAY:{len(day_t)} NIGHT:{len(night_t)})")
+    print(f"  勝率      : {win_rate:.1f}% ({len(wins)}勝 {len(losses)}敗)")
+    print(f"  PF        : {pf:.2f}")
+    print("=" * 60)
+    print(f"  最終資金  : ¥{capital:,.0f}")
+    print(f"  純損益    : ¥{total_pnl:+,.0f}")
+    print(f"  リターン  : {(capital - CAPITAL) / CAPITAL * 100:+.1f}%")
+    print(f"  月平均    : ¥{monthly:+,.0f}")
+    print("=" * 60)
 
 # ============================================================
 # メイン
 # ============================================================
 if __name__ == "__main__":
     df = load_data()
-    run_backtest(df)
+    backtest(df)

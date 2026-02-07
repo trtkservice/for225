@@ -1,625 +1,366 @@
 #!/usr/bin/env python3
 """
-Nikkei 225 Trading Bot - Antigravity Engine v2.1 (Refactored)
-Author: Antigravity Agent
+Raptor225 Trading Bot
+=====================
+楽天証券 / 資金10万円 / 日経225マイクロ1枚 / デイトレード
+
+GitHub Actionsから毎日実行され、シグナルをLINEに通知する。
 """
 
 import os
-import json
 import sys
-import math
-import re
-from datetime import datetime
-import pytz
-import pandas as pd
+import json
+import requests
 import numpy as np
+import pandas as pd
 import yfinance as yf
-import google.generativeai as genai
+import pytz
+from datetime import datetime, time, timedelta
+from pathlib import Path
 
-# --- Configuration & Constants ---
-
+# ============================================================
+# 設定
+# ============================================================
 class Config:
-    # System
+    # タイムゾーン
     JST = pytz.timezone('Asia/Tokyo')
-    DATA_FILE = "data/predictions.json"
     
-    # Trading Specs (Nikkei 225 Micro)
-    CONTRACT_MULTIPLIER = 10  # 1 point = 10 JPY
-    TICK_SIZE = 5             # Minimum fluctuation
-    COST_PER_TRADE = 50       # Estimated commission + slippage per trade
-    LOTS = 2                  # Number of Contracts (Leverage)
+    # 運用設定
+    CAPITAL = 100_000      # 資金10万円
+    LOTS = 1               # マイクロ1枚
+    MULTIPLIER = 10        # 1ポイント = 10円
+    COMMISSION = 22        # 往復手数料
+    TICK = 5               # 呼値
     
-    MAX_HOLD_DAYS = 5
+    # Raptorロジック
+    GAP_CUT = 0.0025       # ギャップ閾値 0.25%
+    STOP_MULT = 1.0        # ストップ = 1.0 ATR
+    TARGET_MULT = 2.0      # ターゲット = 2.0 ATR
     
-    # Strategy Parameters
-    SHADOW_CAPITAL = 100000
+    # データファイル
+    DATA_FILE = "data/portfolio.json"
     
-    # Strategy Definitions (A/B Testing)
-    STRATEGIES = {
-        # Rank 1-10 from Strict Backtest (Spread 5.0, Cost 75)
-        "rank1":  {"name": "R1_Day_0.4_3.0", "stop_mult": 0.4, "target_mult": 3.0, "mode": "DAY", "lots": 2},
-        "rank2":  {"name": "R2_Day_0.4_2.5", "stop_mult": 0.4, "target_mult": 2.5, "mode": "DAY", "lots": 2},
-        "rank3":  {"name": "R3_Day_0.5_3.0", "stop_mult": 0.5, "target_mult": 3.0, "mode": "DAY", "lots": 2},
-        "rank4":  {"name": "R4_Day_0.5_2.5", "stop_mult": 0.5, "target_mult": 2.5, "mode": "DAY", "lots": 2},
-        "rank5":  {"name": "R5_Day_0.4_2.0", "stop_mult": 0.4, "target_mult": 2.0, "mode": "DAY", "lots": 2},
-        "rank6":  {"name": "R6_Day_0.6_3.0", "stop_mult": 0.6, "target_mult": 3.0, "mode": "DAY", "lots": 2},
-        "rank7":  {"name": "R7_Day_0.4_1.5", "stop_mult": 0.4, "target_mult": 1.5, "mode": "DAY", "lots": 2},
-        "rank8":  {"name": "R8_Day_0.4_1.2", "stop_mult": 0.4, "target_mult": 1.2, "mode": "DAY", "lots": 2},
-        "rank9":  {"name": "R9_Day_0.5_2.0", "stop_mult": 0.5, "target_mult": 2.0, "mode": "DAY", "lots": 2},
-        "rank10": {"name": "R10_Day_0.6_2.5", "stop_mult": 0.6, "target_mult": 2.5, "mode": "DAY", "lots": 2},
-        
-        # Reference (Previous Best Swing)
-        # "swing_ref": {"name": "Ref_Swing_0.6_1.2", "stop_mult": 0.6, "target_mult": 1.2, "mode": "SWING", "lots": 2},
-    }
-    
-    # LiL Flexx Weights
-    WEIGHT_TREND = 0.4
-    WEIGHT_MOMENTUM = 0.4
-    WEIGHT_VOLATILITY = 0.2
-    
-    # Project
-    PROJECT_NAME = "Nikkei 225 LiL Flexx Bot (v4.0 - Raptor)"
-    VERSION = "4.0.0"
-    LAST_UPDATED = "2026-02-06"
-    
-    RISK_STOP_ATR_MULT = 1.0   # Optimized (Wide Stop)
-    RISK_TARGET_ATR_MULT = 2.0 # Optimized (Trend Ride)
-    MAX_HOLD_DAYS = 5
-    
-    # Raptor Parameters
-    GAP_THRESHOLD = 0.0025    # 0.25% (RiskGate)
-    MOMENTUM_PERIOD = 48      # 15m bars (12 hours)
-    
-    # Tickers
-    TICKERS = {
-        "nikkei_futures": "NKD=F",
-        "nikkei_index": "^N225",
-        "vix": "^VIX"
-    }
+    # ティッカー
+    TICKER = "NKD=F"       # CME日経225先物
 
-# --- Helper Functions ---
+# ============================================================
+# ユーティリティ
+# ============================================================
+def tick_round(price):
+    """5円刻みに丸める"""
+    return int(round(price / Config.TICK) * Config.TICK)
 
-def round_to_tick(price):
-    """Round price to nearest tick size (5 JPY). Returns None if invalid."""
-    if price is None or pd.isna(price): return None
-    return int(round(price / Config.TICK_SIZE) * Config.TICK_SIZE)
+def calc_slope(closes):
+    """終値配列の回帰傾き"""
+    n = len(closes)
+    if n < 2:
+        return 0
+    x = np.arange(n)
+    y = closes.values if hasattr(closes, 'values') else closes
+    return np.polyfit(x, y, 1)[0]
 
-# --- Components ---
-
-class MarketDataManager:
-    """Handles data fetching from Yahoo Finance."""
+def send_line(message):
+    """LINE Notify送信"""
+    token = os.environ.get("LINE_NOTIFY_TOKEN")
+    if not token:
+        print(f"📱 (LINE未設定) {message}")
+        return
     
+    try:
+        requests.post(
+            "https://notify-api.line.me/api/notify",
+            headers={"Authorization": f"Bearer {token}"},
+            data={"message": f"\n{message}"},
+            timeout=10
+        )
+    except Exception as e:
+        print(f"⚠️ LINE送信失敗: {e}")
+
+# ============================================================
+# データ取得
+# ============================================================
+class MarketData:
     @staticmethod
-    def fetch_all():
-        data = {}
-        # 1. Daily Data (1y)
-        for name, ticker in Config.TICKERS.items():
-            try:
-                t = yf.Ticker(ticker)
-                data[f"{name}_daily"] = t.history(period="1y")
-            except Exception as e:
-                print(f"⚠️ Error fetching {name}: {e}")
-                data[f"{name}_daily"] = pd.DataFrame()
-        
-        # 2. Intraday Data (1mo, 15m) for Raptor Logic (Needs 48 bars history)
+    def fetch():
+        """Yahoo Financeから日経225先物データを取得"""
         try:
-            t = yf.Ticker(Config.TICKERS["nikkei_futures"])
-            data["nikkei_15m"] = t.history(period="1mo", interval="15m")
-            # Fetch News headlines (Top 5)
-            data["news"] = t.news[:5] if t.news else []
+            ticker = yf.Ticker(Config.TICKER)
+            
+            # 日足 (ATR計算用)
+            daily = ticker.history(period="1mo")
+            
+            # 15分足 (モメンタム計算用)
+            intraday = ticker.history(period="5d", interval="15m")
+            
+            return {
+                'daily': daily,
+                'intraday': intraday,
+                'current_price': daily.iloc[-1]['Close'] if not daily.empty else None
+            }
         except Exception as e:
-            print(f"⚠️ Error fetching intraday/news: {e}")
-            data["nikkei_15m"] = pd.DataFrame()
-            data["news"] = []
-            
-        return data
+            print(f"❌ データ取得失敗: {e}")
+            return None
 
-class GeminiAdvisor:
-    """Interfaces with Google Gemini AI as a Risk Gatekeeper."""
+# ============================================================
+# ポートフォリオ管理
+# ============================================================
+class Portfolio:
+    def __init__(self):
+        self.data = self._load()
     
-    def __init__(self, api_key):
-        self.api_key = api_key
-        if api_key:
-            genai.configure(api_key=api_key)
-            
-    def consult(self, scores, market_data):
-        signal = scores.get("signal", "WAIT")
-        
-        # If Raptor says WAIT, no need to ask AI (save tokens)
-        if signal == "WAIT":
-             return {"approved": True, "reasoning": "Raptor is waiting.", "direction": "WAIT"}
-
-        if not self.api_key:
-            return {"approved": True, "reasoning": "No API Key (AI Check Skipped)", "direction": signal}
-            
-        news_items = market_data.get("news", [])
-        prompt = self._create_gatekeeper_prompt(scores, news_items)
-        
-        # Fallback to multiple models
-        for model_name in ['gemini-1.5-flash', 'gemini-pro']:
-            try:
-                model = genai.GenerativeModel(model_name)
-                res = model.generate_content(prompt)
-                return self._parse_response(res.text, signal)
-            except Exception as e:
-                print(f"⚠️  AI Model {model_name} Error: {e}")
-                
-        # If AI fails, default to APPROVE (Trust the Script)
-        return {"approved": True, "reasoning": "AI Unavailable (Default Approve)", "direction": signal}
-
-    def _create_gatekeeper_prompt(self, scores, news_items):
-        news_text = "\n".join([f"- {n.get('title')} ({n.get('publisher')})" for n in news_items])
-        
-        return f"""
-        Role: Senior Risk Manager for a Hedge Fund.
-        Task: Review the Quantitative Strategy (Raptor)'s signal and APPROVE or REJECT based on current market news.
-        
-        STRATEGY SIGNAL: {scores['signal']}
-        Score details: Trend={scores['trend']}, Momentum={scores['momentum']}, Total={scores['total']}
-        
-        LATEST NEWS HEADLINES:
-        {news_text}
-        
-        INSTRUCTIONS:
-        1. Our strategy (Raptor) has a +1500% backtest record. It is highly reliable.
-        2. Your job is ONLY to stop the trade if there is a "Black Swan" or "Extreme Risk" event visible in the news.
-           (e.g., Central Bank Surprise, War outbreak, Major Crash ongoing).
-        3. If the news is normal (earnings, mild fluctuation), APPROVE the trade. Do not overthink technicals.
-        4. If you REJECT, provide a clear, concise reason.
-        
-        OUTPUT FORMAT (JSON):
-        {{
-            "approved": true/false,
-            "reasoning": "Short explanation..."
-        }}
-        """
-
-    def _parse_response(self, text, original_signal):
-        try:
-            # Clean markdown
-            text = re.sub(r'```json', '', text).replace('```', '').strip()
-            data = json.loads(text)
-            
-            approved = data.get("approved", True)
-            reason = data.get("reasoning", "Authorized by AI.")
-            
-            if not approved:
-                print(f"🛑 AI GATEKEEPER BLOCKED TRADE: {reason}")
-                return {"approved": False, "reasoning": f"AI BLOCKED: {reason}", "direction": "WAIT"}
-            
-            return {"approved": True, "reasoning": reason, "direction": original_signal}
-            
-        except Exception as e:
-            print(f"⚠️ AI Parse Error: {e}")
-            return {"approved": True, "reasoning": "Parse Error (Default Approve)", "direction": original_signal}
-
-class TechnicalAnalysis:
-    """Statistical Calculation Library."""
-    # (Existing methods like RSI/MACD kept as utility, though not used in core Raptor)
-    @staticmethod
-    def calc_rsi(series, period=14):
-        # ... (Same as before, abbreviated for simplicity or keep existing if tool allows)
-        # Actually replace_file_content replaces blocks. Let's keep TA class as is mostly.
-        # But we need to replace LiLFlexxEngine methods.
-        pass
-
-# ... (Skipping TA class replacement to avoid huge diff, assume it stays) ...
-
-class LiLFlexxEngine:
-    """Core Trading Logic (Raptor v4.0)."""
+    def _load(self):
+        """JSONからロード"""
+        path = Path(Config.DATA_FILE)
+        if path.exists():
+            with open(path, 'r') as f:
+                return json.load(f)
+        return {
+            'capital': Config.CAPITAL,
+            'position': None,
+            'trades': [],
+            'predictions': []
+        }
     
+    def save(self):
+        """JSONに保存"""
+        path = Path(Config.DATA_FILE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w') as f:
+            json.dump(self.data, f, indent=2, default=str)
+    
+    def has_position(self):
+        return self.data.get('position') is not None
+    
+    def open_position(self, action, entry, stop, target):
+        """ポジション開始"""
+        self.data['position'] = {
+            'action': action,
+            'entry': entry,
+            'stop': stop,
+            'target': target,
+            'opened_at': datetime.now(Config.JST).isoformat()
+        }
+        self.save()
+    
+    def close_position(self, exit_price, reason):
+        """ポジション決済"""
+        pos = self.data['position']
+        if not pos:
+            return None
+        
+        entry = pos['entry']
+        action = pos['action']
+        
+        if action == 'BUY':
+            diff = exit_price - entry
+        else:
+            diff = entry - exit_price
+        
+        pnl = diff * Config.MULTIPLIER * Config.LOTS - Config.COMMISSION
+        
+        trade = {
+            'action': action,
+            'entry': entry,
+            'exit': exit_price,
+            'pnl': pnl,
+            'reason': reason,
+            'closed_at': datetime.now(Config.JST).isoformat()
+        }
+        
+        self.data['trades'].append(trade)
+        self.data['capital'] += pnl
+        self.data['position'] = None
+        self.save()
+        
+        return trade
+    
+    def log_prediction(self, session, action, entry, stop, target):
+        """予測ログ"""
+        self.data['predictions'].append({
+            'date': datetime.now(Config.JST).strftime('%Y-%m-%d'),
+            'session': session,
+            'action': action,
+            'entry': entry,
+            'stop': stop,
+            'target': target
+        })
+        self.save()
+
+# ============================================================
+# Raptorシグナル
+# ============================================================
+class RaptorEngine:
     def __init__(self, market_data):
         self.data = market_data
-        self.scores = {
-            "trend": 0.0, "momentum": 0.0, "volatility": 0.0, 
-            "total": 0.0, "signal": "WAIT", "strength": "WEAK",
-            "details": {}
-        }
-
-    def analyze(self):
-        # Raptor Logic flow
-        self._analyze_session_trend() # B
-        self._analyze_momentum_slope() # C
-        self._integrate_raptor()
-        return self.scores
-
-    def _analyze_session_trend(self):
-        # B: Previous Session Direction
-        # Determine trend of the "Night Session" (approx last 12-15 hours)
-        df = self.data.get("nikkei_15m")
-        val = 0
-        if df is not None and len(df) > 48:
-            # Check price change over last 12 hours (48 bars)
-            start_price = df['Open'].iloc[-48]
-            end_price = df['Close'].iloc[-1]
-            
-            if end_price > start_price: val = 1
-            elif end_price < start_price: val = -1
-            
-        self.scores["trend"] = val
-        self.scores["details"]["trend_summary"] = "Up" if val == 1 else "Down"
-
-    def _analyze_momentum_slope(self):
-        # C: Linear Regression Slope of last N (48) 15m bars
-        df = self.data.get("nikkei_15m")
-        val = 0
-        period = Config.MOMENTUM_PERIOD
+    
+    def get_signal(self, session):
+        """
+        セッションに応じたシグナルを生成
         
-        if df is not None and len(df) >= period:
-            closes = df['Close'].iloc[-period:].values
-            x = np.arange(len(closes))
-            A = np.vstack([x, np.ones(len(x))]).T
-            slope, _ = np.linalg.lstsq(A, closes, rcond=None)[0]
-            
-            self.scores["details"]["slope"] = round(slope, 2)
-            
-            # Raptor Logic: Positive slope -> +1, Negative -> -1
-            if slope > 0: val = 1
-            elif slope < 0: val = -1
-            
-        self.scores["momentum"] = val
-
-    def _analyze_volatility(self):
-        # Placeholder
-        pass 
-
-    def _integrate_raptor(self):
-        # Total = B + C
-        # Buy if >= 2, Sell if <= -2
+        Args:
+            session: 'DAY' or 'NIGHT'
         
-        score_b = self.scores["trend"]
-        score_c = self.scores["momentum"]
+        Returns:
+            dict: {action, entry, stop, target} or None
+        """
+        daily = self.data.get('daily')
+        intraday = self.data.get('intraday')
+        current = self.data.get('current_price')
+        
+        if daily is None or intraday is None or current is None:
+            return None
+        
+        if len(daily) < 2 or len(intraday) < 10:
+            return None
+        
+        # 直前セッションのトレンド (日足の最後のバーで代用)
+        prev_open = daily.iloc[-2]['Open']
+        prev_close = daily.iloc[-2]['Close']
+        
+        # B判定
+        if prev_close > prev_open:
+            score_b = 1
+        elif prev_close < prev_open:
+            score_b = -1
+        else:
+            score_b = 0
+        
+        # C判定 (15分足の傾き)
+        slope = calc_slope(intraday['Close'].iloc[-48:])
+        score_c = 1 if slope > 0 else -1
+        
+        # 合計スコア
         total = score_b + score_c
         
-        self.scores["total"] = total
-        
         if total >= 2:
-            self.scores["signal"] = "LONG"
-            self.scores["strength"] = "STRONG"
+            action = 'BUY'
         elif total <= -2:
-            self.scores["signal"] = "SHORT"
-            self.scores["strength"] = "STRONG"
+            action = 'SELL'
         else:
-            self.scores["signal"] = "WAIT"
-            self.scores["strength"] = "WEAK"
-    
-    # Legacy aliases
-    def _integrate(self): self._integrate_raptor()
-
-class GeminiAdvisor:
-    """Interfaces with Google Gemini AI."""
-    
-    def __init__(self, api_key):
-        self.api_key = api_key
-        if api_key:
-            genai.configure(api_key=api_key)
-
-    def consult(self, scores, market_data):
-        if not self.api_key:
-            return {"approved": True, "reasoning": "No API Key (Simulated)", "direction": scores["signal"]}
-            
-        prompt = self._create_prompt(scores)
+            return None
         
-        # Multiple model fallback
-        for model_name in ['gemini-flash-latest', 'gemini-pro']:
-            try:
-                model = genai.GenerativeModel(model_name)
-                res = model.generate_content(prompt)
-                return self._parse_response(res.text, scores["signal"])
-            except Exception as e:
-                print(f"⚠️  AI Model {model_name} Error: {e}")
-                
-        return {"approved": True, "reasoning": "AI Unavailable", "direction": scores["signal"]}
-
-    def _create_prompt(self, scores):
-        return f"""
-        Role: Senior Hedge Fund Manager.
-        Task: Review LiL Flexx Engine Scores and Approve/Reject Trade.
+        # ギャップチェック
+        gap = abs(current - prev_close) / prev_close
+        if gap >= Config.GAP_CUT:
+            print(f"⚠️ ギャップ {gap*100:.2f}% >= {Config.GAP_CUT*100}% → 見送り")
+            return None
         
-        DATA:
-        - Trend (Daily): {scores['trend']} ({scores['details'].get('trend_summary')})
-        - Momentum (15m): {scores['momentum']} (RSI: {scores['details'].get('rsi')})
-        - Volatility (VIX): {scores['volatility']} (VIX: {scores['details'].get('vix')})
-        - TOTAL SCORE: {scores['total']}
-        - PROPOSED SIGNAL: {scores['signal']}
+        # ATR計算
+        daily['Range'] = daily['High'] - daily['Low']
+        atr = daily['Range'].rolling(14).mean().iloc[-1]
+        if pd.isna(atr) or atr <= 0:
+            atr = 400
         
-        OUTPUT (JSON Only):
-        {{
-            "approved": true/false,
-            "final_direction": "LONG/SHORT/WAIT",
-            "reasoning": "Short succinct analysis."
-        }}
-        """
-
-    def _parse_response(self, text, default_signal):
-        default = {"direction": default_signal, "approved": True, "reasoning": "Parse Failed"}
-        if not text: return default
-        try:
-            match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-            if match:
-                data = json.loads(match.group())
-                return {
-                    "direction": data.get("final_direction", default_signal),
-                    "approved": data.get("approved", True),
-                    "reasoning": data.get("reasoning", "")
-                }
-        except Exception as e:
-            print(f"⚠️ JSON Parse Error: {e}")
-            pass
-        return {"direction": "WAIT", "approved": False, "reasoning": "AI Response Parse Failed"}
-
-class PortfolioManager:
-    """Manages Multiple Shadow Portfolios (A/B Testing)."""
-    
-    def __init__(self):
-        self.file_path = Config.DATA_FILE
-        self.data = self._load_data()
-
-    def _load_data(self):
-        data = {
-            "predictions": [], 
-            "portfolios": {}
+        entry = tick_round(current)
+        s_dist = tick_round(atr * Config.STOP_MULT)
+        t_dist = tick_round(atr * Config.TARGET_MULT)
+        
+        if action == 'BUY':
+            stop = entry - s_dist
+            target = entry + t_dist
+        else:
+            stop = entry + s_dist
+            target = entry - t_dist
+        
+        return {
+            'action': action,
+            'entry': entry,
+            'stop': stop,
+            'target': target,
+            'score_b': score_b,
+            'score_c': score_c,
+            'atr': atr
         }
-        
-        if os.path.exists(self.file_path):
-            with open(self.file_path, 'r') as f:
-                loaded = json.load(f)
-                data.update(loaded)
-        
-        # Auto-initialize missing portfolios from Config
-        for key in Config.STRATEGIES.keys():
-            if key not in data["portfolios"]:
-                data["portfolios"][key] = {"capital": 100000, "position": None, "trades": []}
-                
-        return data
 
-    def save(self):
-        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-        with open(self.file_path, 'w', encoding='utf-8') as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-
-    def update_session(self, current_price_raw: float, low: float, high: float, atr: float):
-        """Update ALL portfolios based on their active positions."""
-        
-        for strat_key, strat_conf in Config.STRATEGIES.items():
-            # Ensure portfolio exists (safety)
-            if strat_key not in self.data["portfolios"]:
-                self.data["portfolios"][strat_key] = {"capital": 100000, "position": None, "trades": []}
-                
-            pf = self.data["portfolios"][strat_key]
-            
-            if not pf.get("position"):
-                continue
-
-            pos = pf["position"]
-            direction = pos["direction"]
-            entry = pos["entry_price"]
-            stop = pos["stop"]
-            target = pos["target"]
-            lots = strat_conf.get("lots", Config.LOTS)
-            mode = strat_conf.get("mode", "SWING")
-            
-            # Checks
-            hit_stop = (low <= stop) if direction == "LONG" else (high >= stop)
-            hit_target = (high >= target) if direction == "LONG" else (low <= target)
-            
-            # Time Expiration
-            try:
-                entry_dt = datetime.strptime(pos["entry_date"], "%Y-%m-%d %H:%M").replace(tzinfo=Config.JST)
-                now_dt = datetime.now(Config.JST)
-                days_held = (now_dt - entry_dt).days
-            except:
-                days_held = 99
-            
-            # Day Trade Logic: Close if we are past 15:00 JST on the entry day, or if days_held > 0
-            # This prevents immediate close if run at 08:00 JST
-            current_hour = datetime.now(Config.JST).hour
-            is_market_closed = (current_hour >= 15 or current_hour < 6)
-            
-            is_day_close = (mode == "DAY" and (days_held > 0 or is_market_closed)) 
-            is_swing_expire = (mode == "SWING" and days_held >= Config.MAX_HOLD_DAYS)
-            
-            time_stop = is_day_close or is_swing_expire
-            
-            # Outcome
-            exit_price = None
-            reason = None
-            
-            if hit_stop:
-                exit_price = stop
-                reason = "STOP"
-                if hit_target: pass # Stop takes precedence if both hit (conservative)
-            elif hit_target:
-                exit_price = target
-                reason = "TARGET"
-            elif time_stop:
-                exit_price = round_to_tick(current_price_raw)
-                reason = "TIME_CLOSE" if mode == "DAY" else "TIME_STOP"
-                
-            if exit_price is not None:
-                p_diff = (exit_price - entry) if direction == "LONG" else (entry - exit_price)
-                gross_pnl = p_diff * Config.CONTRACT_MULTIPLIER * lots
-                net_pnl = gross_pnl - (Config.COST_PER_TRADE * lots)
-                
-                pf["capital"] += net_pnl
-                pf["trades"].append({
-                    "entry_date": pos["entry_date"],
-                    "exit_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
-                    "direction": direction,
-                    "entry_price": int(entry),
-                    "exit_price": int(exit_price),
-                    "lots": lots,
-                    "pnl_points": int(p_diff),
-                    "pnl_yen": int(net_pnl),
-                    "close_reason": reason,
-                    "days_held": days_held
-                })
-                pf["position"] = None
-                print(f"[{strat_conf['name']}] 🛑 Closed: {reason} PnL: {net_pnl:+}")
-            else:
-                print(f"[{strat_conf['name']}] 🛌 Hold: Day {days_held}")
-            
-            self.data["portfolios"][strat_key] = pf
-
-    def open_position(self, prediction, current_price_raw, atr_val):
-        """Try to open position for ALL portfolios if not already holding."""
-        signal = prediction["direction"]
-        if signal not in ["LONG", "SHORT"]: return
-        
-        # Safety Check: Prevent crash if price is invalid
-        if current_price_raw is None or pd.isna(current_price_raw):
-            print("⚠️ Critical: Cannot open position due to missing price data.")
-            return
-
-        entry_price = round_to_tick(current_price_raw)
-        safe_atr = atr_val if not pd.isna(atr_val) else 400.0
-        
-        for strat_key, strat_conf in Config.STRATEGIES.items():
-            pf = self.data["portfolios"][strat_key]
-            
-            if pf.get("position"):
-                continue # Already holding in this strategy
-
-            stop_mult = strat_conf["stop_mult"]
-            target_mult = strat_conf["target_mult"]
-            
-            stop_dist = round_to_tick(safe_atr * stop_mult)
-            target_dist = round_to_tick(safe_atr * target_mult)
-            
-            stop_price = entry_price - stop_dist if signal == "LONG" else entry_price + stop_dist
-            target_price = entry_price + target_dist if signal == "LONG" else entry_price - target_dist
-            
-            pf["position"] = {
-                "direction": signal,
-                "entry_date": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
-                "entry_price": int(entry_price),
-                "stop": int(stop_price),
-                "target": int(target_price),
-                "strategy": strat_key
-            }
-            self.data["portfolios"][strat_key] = pf
-            print(f"[{strat_conf['name']}] 🆕 Entry {signal} @ {entry_price} (Stop:{stop_price} Target:{target_price})")
-
-    def log_prediction(self, scores, prediction, atr):
-        # Allow JSON serialization of scores (convert numpy types)
-        clean_scores = {
-            "trend_score": float(scores["trend"]),
-            "momentum_score": float(scores["momentum"]),
-            "volatility_score": float(scores["volatility"]),
-            "total_score": float(scores["total"]),
-            "details": scores["details"]
-        }
-        
-        self.data["predictions"].append({
-            "timestamp": datetime.now(Config.JST).strftime("%Y-%m-%d %H:%M"),
-            "scores": clean_scores,
-            "prediction": prediction,
-            "atr": round(atr, 2)
-        })
-
-# --- Main App ---
-
+# ============================================================
+# メインBot
+# ============================================================
 class NikkeiBot:
     def __init__(self):
-        self.market = MarketDataManager()
-        self.portfolio = PortfolioManager()
-        self.advisor = GeminiAdvisor(os.environ.get("GEMINI_API_KEY"))
-
+        self.portfolio = Portfolio()
+    
+    def determine_session(self):
+        """現在時刻からセッションを判定"""
+        now = datetime.now(Config.JST)
+        hour = now.hour
+        
+        # 08:00〜09:00 → DAY判定
+        if 8 <= hour < 9:
+            return 'DAY'
+        # 16:00〜17:30 → NIGHT判定
+        elif 16 <= hour < 18:
+            return 'NIGHT'
+        else:
+            return None
+    
     def run(self):
-        # --- Guard: Skip execution on Feb 7th, 2026 (Launch Prep Phase) ---
-        now_jst = datetime.now(Config.JST)
-        # Skip if today is 2/7
-        if now_jst.date() == datetime(2026, 2, 7).date():
-            print(f"🚫 Skipping execution for today ({now_jst.strftime('%Y-%m-%d')}). Launch Prep in progress.")
+        """メイン実行"""
+        print("=" * 60)
+        print("🦖 Raptor225 Bot v1.0")
+        now = datetime.now(Config.JST)
+        print(f"📅 {now.strftime('%Y-%m-%d %H:%M JST')}")
+        print("=" * 60)
+        
+        # セッション判定
+        session = self.determine_session()
+        if not session:
+            print(f"⏰ 現在時刻 {now.hour}:{now.minute:02d} は判定時間外です")
+            print("   DAY判定: 08:00〜09:00")
+            print("   NIGHT判定: 16:00〜17:30")
             return
-        # ------------------------------------------------------------
+        
+        print(f"🎯 {session}セッション判定")
+        
+        # データ取得
+        print("\n📥 データ取得中...")
+        market = MarketData.fetch()
+        if not market:
+            send_line("❌ データ取得失敗")
+            return
+        
+        current = market.get('current_price')
+        print(f"   現在価格: ¥{current:,.0f}")
+        
+        # シグナル生成
+        print("\n🔎 シグナル判定...")
+        engine = RaptorEngine(market)
+        signal = engine.get_signal(session)
+        
+        if not signal:
+            print("   → NO-TRADE (シグナル条件未達)")
+            send_line(f"🦖 {session}セッション\n→ NO-TRADE")
+            return
+        
+        action = signal['action']
+        entry = signal['entry']
+        stop = signal['stop']
+        target = signal['target']
+        
+        print(f"   B={signal['score_b']:+d} C={signal['score_c']:+d}")
+        print(f"   → {action}")
+        print(f"   Entry: ¥{entry:,}")
+        print(f"   Stop:  ¥{stop:,}")
+        print(f"   Target:¥{target:,}")
+        
+        # ログ保存
+        self.portfolio.log_prediction(session, action, entry, stop, target)
+        
+        # LINE通知
+        msg = f"""🦖 {session}セッション
+📈 {action}
+---
+Entry: ¥{entry:,}
+Stop:  ¥{stop:,} (損切り)
+Target:¥{target:,} (利確)
+---
+ATR: {signal['atr']:.0f}"""
+        send_line(msg)
+        
+        print("\n✅ 完了")
 
-        print("="*60)
-        print("🚀 LiL Flexx Engine v2.1 (Multiverse Mode)")
-        print(f"📅 {datetime.now(Config.JST).strftime('%Y-%m-%d %H:%M JST')}")
-        print("="*60)
-
-        # 1. Fetch Data
-        print("📥 Fetching Market Data...")
-        data = self.market.fetch_all()
-        nikkei = data.get("nikkei_futures_daily")
-        
-        if nikkei is None or nikkei.empty:
-            print("❌ Critical Error: No Data")
-            sys.exit(1)
-
-        # 2. Analyze
-        print("\n🧮 Calculating Scores...")
-        engine = LiLFlexxEngine(data)
-        scores = engine.analyze()
-        
-        print(f"   🌊 Trend:   {scores['trend']:+}")
-        print(f"   🚀 Momentum:{scores['momentum']:+}")
-        print(f"   ⚠️ Volatility:{scores['volatility']:+}")
-        print(f"   💎 TOTAL:    {scores['total']} ({scores['signal']})")
-        
-        # 3. AI Concurrence
-        print("\n🧠 AI Confirmation...")
-        prediction = self.advisor.consult(scores, data)
-        print(f"   🤖 Verdict: {prediction['direction']} ({prediction['reasoning']})")
-        
-        # 4. Get Current Metrics
-        atr_series = TechnicalAnalysis.calc_atr(nikkei)
-        current_atr = atr_series.iloc[-1]
-        
-        last_row = nikkei.iloc[-1]
-        current_price = last_row['Close']
-        today_high = last_row['High']
-        today_low = last_row['Low']
-        
-        print(f"   📏 ATR: {current_atr:.0f}")
-
-        # 5. Execute Portfolio Updates
-        self.portfolio.update_session(current_price, today_low, today_high, current_atr)
-        
-        # 6. Record Prediction
-        self.portfolio.log_prediction(scores, prediction, current_atr)
-        
-        # 7. Open New Positions (A/B Test) - RiskGate Disabled
-        gap_wait = False
-        # prev_close = nikkei.iloc[-2]['Close']
-        # gap_rate = abs(current_price - prev_close) / prev_close
-        
-        # if gap_rate >= Config.GAP_THRESHOLD:
-        #     print(f"⚠️ RiskGate Triggered: Gap {gap_rate*100:.2f}% >= {Config.GAP_THRESHOLD*100:.1f}%")
-        #     print("   ⛔ Entry Canceled to avoid gap risk.")
-        #     gap_wait = True
-            
-        if prediction['approved'] and not gap_wait:
-            self.portfolio.open_position(prediction, current_price, current_atr)
-        
-        # 8. Save State
-        self.portfolio.save()
-        
-        # 9. Report Stats (A/B)
-        print("\n📈 Strategy Performance:")
-        portfolios = self.portfolio.data["portfolios"]
-        
-        for key, conf in Config.STRATEGIES.items():
-            pf = portfolios[key]
-            trades = pf["trades"]
-            capital = pf["capital"]
-            
-            wins = len([t for t in trades if t['pnl_yen'] > 0])
-            total_trades = len(trades)
-            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
-            total_pnl = sum(t['pnl_yen'] for t in trades)
-            
-            pos_str = f"{pf['position']['direction']}@{pf['position']['entry_price']}" if pf['position'] else "FLAT"
-            
-            print(f" [{conf['name']}]")
-            print(f"   💰 Cap: ¥{capital:,.0f} ({total_pnl:+})")
-            print(f"   📊 Win: {win_rate:.1f}% ({wins}/{total_trades})")
-            print(f"   📍 Pos: {pos_str}")
-            print("-" * 30)
-            
-        print("✅ Done.")
-
+# ============================================================
+# エントリーポイント
+# ============================================================
 if __name__ == "__main__":
     bot = NikkeiBot()
     bot.run()
