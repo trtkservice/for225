@@ -142,25 +142,30 @@ def raptor_signal(prev_ohlc, slope):
 def execute_trade(df_1m, action, entry_price, stop, target, session_end):
     """
     分足をループしてStop/Target判定、ヒットしなければセッション終了時決済
+    Returns: (exit_price, reason, session_high, session_low)
     """
     session_data = df_1m.loc[:session_end]
+    
+    if session_data.empty:
+        return entry_price, 'NO_DATA', 0, 0
+    
+    session_high = session_data['High'].max()
+    session_low = session_data['Low'].min()
     
     for _, bar in session_data.iterrows():
         if action == 'BUY':
             if bar['Low'] <= stop:
-                return stop, 'STOP'
+                return stop, 'STOP', session_high, session_low
             if bar['High'] >= target:
-                return target, 'TARGET'
+                return target, 'TARGET', session_high, session_low
         else:  # SELL
             if bar['High'] >= stop:
-                return stop, 'STOP'
+                return stop, 'STOP', session_high, session_low
             if bar['Low'] <= target:
-                return target, 'TARGET'
+                return target, 'TARGET', session_high, session_low
     
     # セッション終了時決済
-    if not session_data.empty:
-        return tick_round(session_data.iloc[-1]['Close']), 'CLOSE'
-    return entry_price, 'NO_DATA'
+    return tick_round(session_data.iloc[-1]['Close']), 'CLOSE', session_high, session_low
 
 # ============================================================
 # バックテスト本体
@@ -236,7 +241,7 @@ def backtest(df_1m):
                                 target = entry - t_dist
                             
                             # トレード実行
-                            exit_price, reason = execute_trade(
+                            exit_price, reason, s_high, s_low = execute_trade(
                                 day_data, action, entry, stop, target, day_end
                             )
                             
@@ -255,7 +260,8 @@ def backtest(df_1m):
                             
                             # 2025年12月の詳細ログ
                             if today.year == 2025 and today.month == 12:
-                                print(f"  [DEC] {today} DAY | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason}) | PnL:{pnl:+,.0f}")
+                                print(f"  [DEC] {today} DAY | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason})")
+                                print(f"         SessionRange: Low={s_low:.0f} High={s_high:.0f} | PnL:{pnl:+,.0f}")
         
         # ========== NIGHTセッション ==========
         # 直前 = 同日DAY (今日08:45〜15:15)
@@ -302,7 +308,7 @@ def backtest(df_1m):
                                 target = entry - t_dist
                             
                             # トレード実行
-                            exit_price, reason = execute_trade(
+                            exit_price, reason, s_high, s_low = execute_trade(
                                 night_data, action, entry, stop, target, night_end
                             )
                             
@@ -321,7 +327,8 @@ def backtest(df_1m):
                             
                             # 2025年12月の詳細ログ
                             if today.year == 2025 and today.month == 12:
-                                print(f"  [DEC] {today} NIGHT | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason}) | PnL:{pnl:+,.0f}")
+                                print(f"  [DEC] {today} NIGHT | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason})")
+                                print(f"         SessionRange: Low={s_low:.0f} High={s_high:.0f} | PnL:{pnl:+,.0f}")
     
     # ========== 結果集計 ==========
     print("-" * 60)
