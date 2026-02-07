@@ -466,6 +466,11 @@ class PortfolioManager:
         signal = prediction["direction"]
         if signal not in ["LONG", "SHORT"]: return
         
+        # Safety Check: Prevent crash if price is invalid
+        if current_price_raw is None or pd.isna(current_price_raw):
+            print("⚠️ Critical: Cannot open position due to missing price data.")
+            return
+
         entry_price = round_to_tick(current_price_raw)
         safe_atr = atr_val if not pd.isna(atr_val) else 400.0
         
