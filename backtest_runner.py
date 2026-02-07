@@ -154,9 +154,9 @@ def execute_session_trade(df_1m, df_15m, df_daily, session_type,
         score_b = 0   # 同値
     
     # 3. C判定: モメンタム (15分足の傾き)
-    # 直前セッション終了時点までの15分足を使う
-    recent_15m = df_15m.loc[:prev_session_close_time].iloc[-MOMENTUM_PERIOD:]
-    if len(recent_15m) < MOMENTUM_PERIOD // 2:
+    # 直前セッションの15分足のみを使う（セッション混合を防止）
+    recent_15m = df_15m.loc[prev_open_time:prev_session_close_time]
+    if len(recent_15m) < 10:  # 最低10本（2.5時間分）あればOK
         return None  # データ不足
     
     slope = calculate_slope(recent_15m['Close'])
