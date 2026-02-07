@@ -246,7 +246,8 @@ def backtest(df_1m):
                             
                             trades.append({
                                 'date': today, 'session': 'DAY', 'action': action,
-                                'entry': entry, 'exit': exit_price, 'pnl': pnl
+                                'entry': entry, 'exit': exit_price, 'pnl': pnl,
+                                'reason': reason
                             })
                             
                             if len(trades) <= 5:
@@ -307,7 +308,8 @@ def backtest(df_1m):
                             
                             trades.append({
                                 'date': today, 'session': 'NIGHT', 'action': action,
-                                'entry': entry, 'exit': exit_price, 'pnl': pnl
+                                'entry': entry, 'exit': exit_price, 'pnl': pnl,
+                                'reason': reason
                             })
                             
                             if len(trades) <= 5:
@@ -350,6 +352,14 @@ def backtest(df_1m):
     print(f"  リターン  : {(capital - CAPITAL) / CAPITAL * 100:+.1f}%")
     print(f"  月平均    : ¥{monthly:+,.0f}")
     print("=" * 60)
+    
+    # 決済理由の内訳
+    if 'reason' in df_t.columns:
+        reason_counts = df_t['reason'].value_counts()
+        print("\n📈 決済理由内訳:")
+        for r, cnt in reason_counts.items():
+            pct = cnt / len(df_t) * 100
+            print(f"  {r}: {cnt}回 ({pct:.1f}%)")
 
 # ============================================================
 # メイン
