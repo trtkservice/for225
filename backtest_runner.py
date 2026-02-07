@@ -14,12 +14,19 @@ warnings.simplefilter(action='ignore', category=UserWarning)
 
 # Config
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-from nikkei_bot import Config, round_to_tick
+# Context Check: Try importing from src, fallback if testing environment differs
+try:
+    from nikkei_bot import Config, round_to_tick
+except ImportError:
+    class Config:
+        TICK_SIZE = 5
+    def round_to_tick(price):
+        return int(round(price / 5) * 5)
 
 # Data Directory
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Simulation Config
+# Simulation Config (Strict Settings for Micro 2 Lots)
 INITIAL_CAPITAL = 100000 # 100k start
 BACKTEST_LOTS = 2        # 2 Micro Lots
 MULTIPLIER = 10          # Micro = 10x
@@ -94,7 +101,7 @@ def load_and_merge_data():
 
 def create_session_data(df_1m):
     """
-    Create Session Data (DAY / NIGHT) and 15m Data.
+    Create Session Data (15m Data).
     """
     print("🔄 Creating Session & 15m Data...")
     
@@ -121,8 +128,19 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
     win_count = 0
     trade_count = 0
     
+    # Debug Metrics
+    atr_values = []
+    slope_values = []
+    atr_fallback_count = 0
+    
+    # Ensure df_daily has DatetimeIndex
+    if not isinstance(df_daily.index, pd.DatetimeIndex):
+        df_daily.index = pd.to_datetime(df_daily.index)
+
     unique_dates = sorted(list(set(df_1m.index.date)))
     months = len(set([d.strftime('%Y-%m') for d in unique_dates]))
+    
+    print(f"🚀 Starting Simulation... (Dates: {len(unique_dates)})")
     
     for i in range(1, len(unique_dates)):
         curr_date = unique_dates[i]
@@ -135,7 +153,7 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
         
         day_data = df_1m.loc[day_start:day_end]
         if day_data.empty: continue
-        entry_price = day_data.iloc[0]['Open']
+        entry_price = round_to_tick(day_data.iloc[0]['Open']) # Round Entry
         
         night_start = datetime.combine(prev_date, time(16, 30))
         night_end = datetime.combine(curr_date, time(6, 0))
@@ -154,10 +172,22 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
         # 2. B: Night Trend
         score_b = 1 if prev_close > prev_open else -1
         
-        # 3. C: Momentum Slope
-        recent_15m = df_15m.loc[:day_start].iloc[-(n_period+1):-1]
-        if len(recent_15m) < n_period: continue
+        # 3. C: Momentum Slope (Robust Night Session Logic)
+        # We need strict Night Session window for slope calculation
+        # To match the "Night Trend", we should look at the trend leading up to morning.
+        
+        # Extract 15m bars strictly within [Night Start, Day Start]
+        # This covers the 16:30 -> 06:00 -> 08:45 Gap. 
+        # Actually Raptor logic wants "Slope of recent prices".
+        recent_15m = df_15m.loc[night_start:day_start].iloc[:-1] # Exclude the 08:45 candle itself
+        
+        # Take last N
+        recent_15m = recent_15m.iloc[-n_period:]
+        
+        if len(recent_15m) < n_period * 0.5: continue # If less than half period data available, skip (safety)
+
         slope = calculate_slope(recent_15m['Close'])
+        slope_values.append(slope)
         score_c = 1 if slope > 0 else -1
         
         total = score_b + score_c
@@ -168,22 +198,34 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
         if action == "NO-TRADE": continue
         
         # --- RISK EXECUTION ---
-        atr = 300 # Default
+        # Robust ATR Lookup
+        atr = 800.0 # Standard Nikkei ATR (fallback)
         try:
-            atr_s = df_daily.loc[str(prev_date)]['ATR']
-            atr = atr_s if not pd.isna(atr_s) else 300
-        except: pass
+            ts_lookup = pd.Timestamp(prev_date)
+            # Find closest available ATR on or before prev_date
+            idx = df_daily.index.get_indexer([ts_lookup], method='pad')[0]
+            if idx != -1:
+                atr_cand = df_daily.iloc[idx]['ATR']
+                if not pd.isna(atr_cand) and atr_cand > 0:
+                    atr = atr_cand
+                else:
+                    atr_fallback_count += 1
+            else:
+                atr_fallback_count += 1
+        except:
+            atr_fallback_count += 1
         
-        s_dist = round_to_tick(atr * stop_mult)
-        t_dist = round_to_tick(atr * target_mult)
+        atr_values.append(atr)
         
-        stop = entry_price - s_dist if action == "BUY" else entry_price + s_dist
-        target = entry_price + t_dist if action == "BUY" else entry_price - t_dist
+        s_dist = int(round(atr * stop_mult / Config.TICK_SIZE)) * Config.TICK_SIZE
+        t_dist = int(round(atr * target_mult / Config.TICK_SIZE)) * Config.TICK_SIZE
+        
+        stop = round_to_tick(entry_price - s_dist) if action == "BUY" else round_to_tick(entry_price + s_dist)
+        target = round_to_tick(entry_price + t_dist) if action == "BUY" else round_to_tick(entry_price - t_dist)
         
         exit_price = None
         
         # Vectorized Intra-day Check
-        # For performance, we assume OHLC check is enough.
         # Strict Mode: Iterate minute bars
         for idx, row in day_data.iterrows():
             if action == "BUY":
@@ -194,7 +236,7 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
                 if row['Low'] <= target: exit_price = target; break
         
         if exit_price is None:
-            exit_price = day_data.iloc[-1]['Close']
+            exit_price = round_to_tick(day_data.iloc[-1]['Close'])
             
         # PnL Calculation
         diff = (exit_price - entry_price) if action == "BUY" else (entry_price - exit_price)
@@ -207,6 +249,10 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
         trade_count += 1
         if bn > 0: win_count += 1
 
+        # Debug Sample (First 5 trades)
+        if trade_count <= 5:
+            print(f"DEBUG TRADE #{trade_count}: {curr_date} {action} Entry={entry_price} Exit={exit_price} Diff={diff} ATR={atr:.0f} PnL={bn:.0f}")
+
     total_profit = sum([x for x in trades if x > 0])
     total_loss = abs(sum([x for x in trades if x < 0]))
     pf = (total_profit / total_loss) if total_loss > 0 else 0
@@ -214,6 +260,11 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target
     total_ret = (capital - INITIAL_CAPITAL) / INITIAL_CAPITAL * 100
     avg_monthly_ret = total_ret / months if months > 0 else 0
     avg_monthly_pnl = (capital - INITIAL_CAPITAL) / months if months > 0 else 0
+    
+    print("-" * 50)
+    if atr_values:
+        print(f"DEBUG: ATR Stats | Min: {np.min(atr_values):.0f} Max: {np.max(atr_values):.0f} Mean: {np.mean(atr_values):.0f} Fallbacks: {atr_fallback_count}/{trade_count}")
+    print("-" * 50)
     
     return {
         "return": total_ret,
@@ -231,6 +282,7 @@ def run_grid_search_raptor():
     df_15m = create_session_data(df_1m)
     
     # Pre-calc daily ATR
+    # Resample Daily High/Low for ATR
     df_daily = df_1m.resample('D').agg({'High':'max','Low':'min','Close':'last'}).dropna()
     df_daily['ATR'] = (df_daily['High'] - df_daily['Low']).rolling(14).mean()
     
