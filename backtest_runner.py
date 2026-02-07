@@ -252,6 +252,10 @@ def backtest(df_1m):
                             
                             if len(trades) <= 5:
                                 print(f"  #{len(trades)} {today} DAY {action} {entry}→{exit_price} PnL={pnl:+,.0f}")
+                            
+                            # 2025年12月の詳細ログ
+                            if today.year == 2025 and today.month == 12:
+                                print(f"  [DEC] {today} DAY | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason}) | PnL:{pnl:+,.0f}")
         
         # ========== NIGHTセッション ==========
         # 直前 = 同日DAY (今日08:45〜15:15)
@@ -314,6 +318,10 @@ def backtest(df_1m):
                             
                             if len(trades) <= 5:
                                 print(f"  #{len(trades)} {today} NIGHT {action} {entry}→{exit_price} PnL={pnl:+,.0f}")
+                            
+                            # 2025年12月の詳細ログ
+                            if today.year == 2025 and today.month == 12:
+                                print(f"  [DEC] {today} NIGHT | {action} | Entry:{entry} Stop:{stop} Target:{target} | ATR:{atr:.0f} | Exit:{exit_price}({reason}) | PnL:{pnl:+,.0f}")
     
     # ========== 結果集計 ==========
     print("-" * 60)
