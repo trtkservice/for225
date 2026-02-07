@@ -31,10 +31,10 @@ BACKTEST_LOTS = 2        # 2 Micro Lots
 MULTIPLIER = 10          # Micro = 10x
 COST_PER_TRADE = 60      # Rakuten Micro ~11JPY x 2 x 2 sides + Slippage
 
-# --- Raptor EXACT Settings (from Internal Prompt) ---
+# --- Raptor Settings (Rolled Back to N=48, No D) ---
 BEST_G = 0.0025   # 0.25%
-BEST_N = 32       # 32 bars (8 hours) - Changed from 48
-BEST_R = 1.8      # Overheat threshold
+BEST_N = 48       # 48 bars (12 hours) - Reverted to performant setting
+# BEST_R = 1.8    # D-Logic Removed
 
 # Search Range for Risk Management
 STOP_RANGE = [1.0]
@@ -118,58 +118,25 @@ def calculate_slope(series):
     a, b = np.linalg.lstsq(A, y, rcond=None)[0]
     return a
 
-def precalculate_night_ranges(df_1m):
-    """
-    Calculate the High-Low range for every Night Session.
-    Night Session T-1 (16:30) to T (06:00) is attributed to Date T.
-    """
-    print("🌙 Pre-calculating Night Session Ranges (Logic D)...")
-    night_ranges = {}
-    
-    unique_dates = sorted(list(set(df_1m.index.date)))
-    
-    for i in range(1, len(unique_dates)):
-        curr_date = unique_dates[i]
-        prev_date = unique_dates[i-1]
-        
-        night_start = datetime.combine(prev_date, time(16, 30))
-        night_end = datetime.combine(curr_date, time(6, 0))
-        
-        # Slicing
-        night_data = df_1m.loc[night_start:night_end]
-        if night_data.empty:
-            continue
-            
-        rng = night_data['High'].max() - night_data['Low'].min()
-        night_ranges[curr_date] = rng
-        
-    return night_ranges
-
-def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mult, target_mult, df_daily, night_ranges):
+def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, stop_mult, target_mult, df_daily):
     capital = INITIAL_CAPITAL
     trades = []
     
     # Debug Metrics
     atr_values = []
-    d_activations = 0
     
-    unique_dates = sorted(list(set(df_1m.index.date))) # Dates
-    # Convert night_ranges keys to list for indexing if needed, or use dict
-    # We need "Past 10 sessions average". 
-    # Let's create a DataFrame for sliding window
-    nr_df = pd.DataFrame.from_dict(night_ranges, orient='index', columns=['Range'])
-    nr_df['Avg10'] = nr_df['Range'].rolling(10).mean().shift(1) # Avg of LAST 10 (excluding current)
-    # Actually prompt says: "Avg(Last 10) including current? or excluding?"
-    # Prompt: "Review prev session range vs Avg(Last 10)". Usually implies historical baseline.
-    # Let's use rolling mean of previous 10.
-    
+    # Ensure df_daily has DatetimeIndex
+    if not isinstance(df_daily.index, pd.DatetimeIndex):
+        df_daily.index = pd.to_datetime(df_daily.index)
+
+    unique_dates = sorted(list(set(df_1m.index.date)))
     months = len(set([d.strftime('%Y-%m') for d in unique_dates]))
     trades_executed = 0
     wins = 0
     
-    print(f"🚀 Starting Exact Raptor Simulation... (Dates: {len(unique_dates)})")
+    print(f"🚀 Starting Original Raptor Simulation... (Dates: {len(unique_dates)})")
     
-    for i in range(10, len(unique_dates)): # Start from 10 to allow history
+    for i in range(1, len(unique_dates)):
         curr_date = unique_dates[i]
         prev_date = unique_dates[i-1]
         
@@ -196,27 +163,9 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mu
         if abs(gap_rate) >= g_cut: continue
         
         # 2. B: Night Trend
-        # 陽線:+1、陰線:-1、同値:0
-        if prev_close > prev_open: score_b = 1
-        elif prev_close < prev_open: score_b = -1
-        else: score_b = 0
+        score_b = 1 if prev_close > prev_open else -1
         
-        # 4. D: Overheat logic
-        # Check night range
-        is_overheat = False
-        if curr_date in nr_df.index:
-            current_range = nr_df.loc[curr_date]['Range']
-            avg_range = nr_df.loc[curr_date]['Avg10']
-            
-            if not pd.isna(avg_range) and avg_range > 0:
-                if current_range >= (avg_range * r_factor):
-                    is_overheat = True
-                    d_activations += 1
-                    # Weaken B
-                    score_b = 0
-        
-        # 3. C: Momentum
-        # Last N=32 bars ENDING at day_start
+        # 3. C: Momentum (Using Night -> Day Transition Window)
         recent_15m = df_15m.loc[night_start:day_start].iloc[:-1] # Exclude 08:45 candle
         recent_15m = recent_15m.iloc[-n_period:]
         if len(recent_15m) < n_period * 0.5: continue
@@ -224,7 +173,7 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mu
         slope = calculate_slope(recent_15m['Close'])
         score_c = 1 if slope > 0 else -1
         
-        # Total
+        # Total (No D Logic)
         total = score_b + score_c
         action = "NO-TRADE"
         if total >= 2: action = "BUY"
@@ -236,6 +185,7 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mu
         atr = 800.0 
         try:
             ts_lookup = pd.Timestamp(prev_date)
+            # Find closest available ATR on or before prev_date
             idx = df_daily.index.get_indexer([ts_lookup], method='pad')[0]
             if idx != -1:
                 atr_cand = df_daily.iloc[idx]['ATR']
@@ -270,7 +220,7 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mu
         if bn > 0: wins += 1
 
         if trades_executed <= 3:
-             print(f"DEBUG #{trades_executed}: {curr_date} {action} B={score_b}(OH={is_overheat}) C={score_c} PnL={bn:.0f}")
+             print(f"DEBUG #{trades_executed}: {curr_date} {action} Entry={entry_price} Exit={exit_price} ATR={atr:.0f} PnL={bn:.0f}")
 
     total_profit = sum([x for x in trades if x > 0])
     total_loss = abs(sum([x for x in trades if x < 0]))
@@ -279,7 +229,8 @@ def run_raptor_simulation_risk(df_1m, df_15m, g_cut, n_period, r_factor, stop_mu
     avg_monthly_pnl = (capital - INITIAL_CAPITAL) / months if months > 0 else 0
     
     print("-" * 50)
-    print(f"DEBUG: D-Logic triggered {d_activations} times.")
+    if atr_values:
+         print(f"DEBUG: ATR Stats | Mean: {np.mean(atr_values):.0f}")
     print("-" * 50)
     
     return {
@@ -298,16 +249,13 @@ def run_grid_search_raptor():
     df_daily = df_1m.resample('D').agg({'High':'max','Low':'min','Close':'last'}).dropna()
     df_daily['ATR'] = (df_daily['High'] - df_daily['Low']).rolling(14).mean()
     
-    # Pre-calc Night Ranges for D-Logic
-    night_ranges = precalculate_night_ranges(df_1m)
-    
-    print(f"🔎 Raptor225 EXACT (Micro 2 Lots, N={BEST_N}, D-Logic)")
+    print(f"🔎 Raptor225 Original Logic (Micro 2 Lots, N={BEST_N}, No-D)")
     print("="*100)
     print("Stop | Tgt  || Ret%   | Avg/Mo(JPY) | PF   | Win%  | Trades")
     print("-" * 100)
     
     for s_mult, t_mult in itertools.product(STOP_RANGE, TARGET_RANGE):
-        res = run_raptor_simulation_risk(df_1m, df_15m, BEST_G, BEST_N, BEST_R, s_mult, t_mult, df_daily, night_ranges)
+        res = run_raptor_simulation_risk(df_1m, df_15m, BEST_G, BEST_N, s_mult, t_mult, df_daily)
         print(f"{s_mult:<4} | {t_mult:<4} || {res['return']:>6.1f}% | ¥{res['monthly_pnl']:>9,.0f} | {res['pf']:4.2f} | {res['win_rate']:5.1f}% | {res['trades']}")
     print("="*100)
 
